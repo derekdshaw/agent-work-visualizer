@@ -1,25 +1,76 @@
-package main
+package java
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
 
+	"github.com/derek-shaw/agent-work-visualizer/internal/callgraph"
+	"github.com/derek-shaw/agent-work-visualizer/internal/lang/langutil"
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 	tree_sitter_java "github.com/tree-sitter/tree-sitter-java/bindings/go"
 )
 
-type javaAnalysis struct {
+// Language analyzes Java sources. It holds no state, so one value can
+// analyze any number of trees.
+type Language struct{}
+
+func New() Language {
+	return Language{}
+}
+
+func (Language) Name() string {
+	return "java"
+}
+
+func (Language) Extensions() []string {
+	return []string{".java"}
+}
+
+func (Language) SkipDirs() []string {
+	return []string{".gradle", "build", "out", "target"}
+}
+
+func (Language) IsTestFile(relativePath string) bool {
+	name := filepath.Base(relativePath)
+	if strings.HasSuffix(name, "Test.java") || strings.HasSuffix(name, "Tests.java") || strings.HasSuffix(name, "IT.java") {
+		return true
+	}
+	return langutil.InDirectory(relativePath, "test", "tests", "it")
+}
+
+func (Language) Analyze(root string, files []string) (*callgraph.Graph, error) {
+	a := &analysis{
+		root:      root,
+		files:     make(map[string]*javaFile),
+		types:     make(map[string]*javaType),
+		simple:    make(map[string][]string),
+		callables: make(map[string]*javaCallable),
+		methods:   make(map[string][]*javaCallable),
+		aliases:   make(map[string]string),
+	}
+	if err := langutil.EachFile(root, files, a.analyzeJavaFile); err != nil {
+		return nil, err
+	}
+	a.resolveJavaCalls()
+	a.addJavaDispatchEdges()
+	return &a.graph, nil
+}
+
+type analysis struct {
+	root      string
+	graph     callgraph.Graph
 	files     map[string]*javaFile
 	types     map[string]*javaType
 	simple    map[string][]string
 	callables map[string]*javaCallable
 	methods   map[string][]*javaCallable
 	calls     []javaCall
-	services  map[string]map[string]bool
 	aliases   map[string]string
 }
 
@@ -40,7 +91,6 @@ type javaType struct {
 	recordTypes   []string
 	recordNames   []string
 	file          *javaFile
-	dependency    bool
 }
 
 type javaCallable struct {
@@ -51,7 +101,6 @@ type javaCallable struct {
 	varargs        bool
 	constructor    bool
 	file           *javaFile
-	dependency     bool
 }
 
 type javaCall struct {
@@ -71,64 +120,33 @@ type javaCall struct {
 	variables     map[string]string
 }
 
-func newJavaAnalysis() *javaAnalysis {
-	return &javaAnalysis{
-		files:     make(map[string]*javaFile),
-		types:     make(map[string]*javaType),
-		simple:    make(map[string][]string),
-		callables: make(map[string]*javaCallable),
-		methods:   make(map[string][]*javaCallable),
-		services:  make(map[string]map[string]bool),
-		aliases:   make(map[string]string),
-	}
-}
-
-func (a *analyzer) analyzeJavaFile(path string, dependency bool) error {
+func (a *analysis) analyzeJavaFile(path string) error {
 	source, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
-	parser := tree_sitter.NewParser()
-	defer parser.Close()
-	if err := parser.SetLanguage(tree_sitter.NewLanguage(tree_sitter_java.Language())); err != nil {
-		return fmt.Errorf("configure Java parser: %w", err)
+	if isGeneratedJava(source) {
+		return nil
 	}
-	tree := parser.Parse(source, nil)
-	if tree == nil {
-		return fmt.Errorf("parse %s: parser returned no tree", path)
+	tree, err := langutil.Parse(path, source, tree_sitter.NewLanguage(tree_sitter_java.Language()))
+	if err != nil {
+		return err
 	}
 	defer tree.Close()
 	root := tree.RootNode()
-	if bad := firstInvalidNode(root); bad != nil {
-		point := bad.StartPosition()
-		kind := "syntax error"
-		if bad.IsMissing() {
-			kind = "missing syntax"
-		}
-		return fmt.Errorf("%s:%d:%d: %s (%s)", path, point.Row+1, point.Column+1, kind, bad.Kind())
-	}
-	relativeRoot := a.root
-	if dependency && a.workspace != "" {
-		relativeRoot = a.workspace
-	}
-	relative, err := filepath.Rel(relativeRoot, path)
+	relative, err := filepath.Rel(a.root, path)
 	if err != nil {
 		return fmt.Errorf("relative path for %s: %w", path, err)
 	}
 	relative = filepath.ToSlash(relative)
 	state := parseJavaFile(root, source)
-	a.java.files[relative] = state
-	a.graph.Files = append(a.graph.Files, GraphFile{Path: relative, Module: state.packageName, Language: "java", Dependency: dependency})
+	a.files[relative] = state
+	a.graph.Files = append(a.graph.Files, callgraph.File{Path: relative, Module: state.packageName, Language: "java"})
 	a.graph.Stats.Files++
-	if dependency {
-		a.graph.Stats.DependencyFiles++
-	} else {
-		a.graph.Stats.ProjectFiles++
-	}
 	for i := uint(0); i < root.NamedChildCount(); i++ {
 		child := root.NamedChild(i)
 		if isJavaTypeDeclaration(child.Kind()) {
-			a.collectJavaType(child, source, relative, state, "", dependency)
+			a.collectJavaType(child, source, relative, state, "")
 		}
 	}
 	return nil
@@ -183,13 +201,12 @@ func isJavaTypeDeclaration(kind string) bool {
 	}
 }
 
-func (a *analyzer) collectJavaType(
+func (a *analysis) collectJavaType(
 	node *tree_sitter.Node,
 	source []byte,
 	file string,
 	state *javaFile,
 	parent string,
-	dependency bool,
 ) {
 	nameNode := node.ChildByFieldName("name")
 	body := node.ChildByFieldName("body")
@@ -201,14 +218,13 @@ func (a *analyzer) collectJavaType(
 	if parent != "" {
 		owner = parent + "." + name
 	}
-	qualifiedName := qualified(state.packageName, owner)
+	qualifiedName := langutil.Qualified(state.packageName, owner)
 	info := &javaType{
 		qualifiedName: qualifiedName,
 		simpleName:    name,
 		packageName:   state.packageName,
 		fields:        make(map[string]string),
 		file:          state,
-		dependency:    dependency,
 	}
 	if superclass := node.ChildByFieldName("superclass"); superclass != nil {
 		info.superclass = strings.TrimSpace(strings.TrimPrefix(superclass.Utf8Text(source), "extends"))
@@ -219,12 +235,12 @@ func (a *analyzer) collectJavaType(
 			info.fields[component] = info.recordTypes[index]
 		}
 	}
-	a.java.types[qualifiedName] = info
-	a.java.simple[name] = append(a.java.simple[name], qualifiedName)
+	a.types[qualifiedName] = info
+	a.simple[name] = append(a.simple[name], qualifiedName)
 	_, annotations := javaModifiers(node, source)
-	if contains(annotations, "Immutable") && strings.HasPrefix(name, "Abstract") {
-		generated := qualified(state.packageName, strings.TrimPrefix(name, "Abstract"))
-		a.java.aliases[generated] = qualifiedName
+	if slices.Contains(annotations, "Immutable") && strings.HasPrefix(name, "Abstract") {
+		generated := langutil.Qualified(state.packageName, strings.TrimPrefix(name, "Abstract"))
+		a.aliases[generated] = qualifiedName
 	}
 	for i := uint(0); i < body.NamedChildCount(); i++ {
 		child := body.NamedChild(i)
@@ -236,7 +252,7 @@ func (a *analyzer) collectJavaType(
 		child := body.NamedChild(i)
 		switch {
 		case isJavaTypeDeclaration(child.Kind()):
-			a.collectJavaType(child, source, file, state, owner, dependency)
+			a.collectJavaType(child, source, file, state, owner)
 		case child.Kind() == "method_declaration":
 			a.collectJavaCallable(child, source, file, state, info, false, nil, nil)
 		case child.Kind() == "constructor_declaration":
@@ -249,7 +265,7 @@ func (a *analyzer) collectJavaType(
 	}
 }
 
-func (a *analyzer) collectJavaCallable(
+func (a *analysis) collectJavaCallable(
 	node *tree_sitter.Node,
 	source []byte,
 	file string,
@@ -288,7 +304,7 @@ func (a *analyzer) collectJavaCallable(
 	if body := node.ChildByFieldName("body"); body != nil {
 		signatureEnd = body.StartByte()
 	}
-	function := Function{
+	function := callgraph.Function{
 		ID:            id,
 		Name:          name,
 		QualifiedName: qualifiedName,
@@ -307,7 +323,6 @@ func (a *analyzer) collectJavaCallable(
 		Kind:          kind,
 		Modifiers:     modifiers,
 		Parameters:    parameterTypes,
-		Dependency:    owner.dependency,
 	}
 	if function.Directory == "." {
 		function.Directory = ""
@@ -316,20 +331,14 @@ func (a *analyzer) collectJavaCallable(
 		function.EntryKind = "main"
 	}
 	a.graph.Nodes = append(a.graph.Nodes, function)
-	a.nodesByID[id] = &a.graph.Nodes[len(a.graph.Nodes)-1]
 	a.graph.Stats.Definitions++
-	if owner.dependency {
-		a.graph.Stats.DependencyDefinitions++
-	} else {
-		a.graph.Stats.ProjectDefinitions++
-	}
 	callable := &javaCallable{
 		id: id, owner: owner.qualifiedName, name: callName, parameterTypes: parameterTypes,
-		varargs: varargs, constructor: constructor, file: state, dependency: owner.dependency,
+		varargs: varargs, constructor: constructor, file: state,
 	}
-	a.java.callables[id] = callable
+	a.callables[id] = callable
 	key := owner.qualifiedName + "\x00" + callName
-	a.java.methods[key] = append(a.java.methods[key], callable)
+	a.methods[key] = append(a.methods[key], callable)
 	body := node.ChildByFieldName("body")
 	if body == nil {
 		return
@@ -429,7 +438,7 @@ func isJavaMain(
 	if name != "main" || len(parameters) != 1 || typeNode == nil || normalizeJavaType(typeNode.Utf8Text(source)) != "void" {
 		return false
 	}
-	if !contains(modifiers, "public") || !contains(modifiers, "static") {
+	if !slices.Contains(modifiers, "public") || !slices.Contains(modifiers, "static") {
 		return false
 	}
 	parameter := eraseJavaType(parameters[0])
@@ -459,7 +468,7 @@ func collectJavaVariables(node *tree_sitter.Node, source []byte, variables map[s
 	}
 }
 
-func (a *analyzer) collectJavaCalls(
+func (a *analysis) collectJavaCalls(
 	node *tree_sitter.Node,
 	source []byte,
 	file string,
@@ -511,7 +520,7 @@ func (a *analyzer) collectJavaCalls(
 			if constructor {
 				name = "<init>"
 			}
-			a.java.calls = append(a.java.calls, javaCall{
+			a.calls = append(a.calls, javaCall{
 				caller: caller.id, owner: caller.owner, name: name, receiver: strings.TrimSpace(parts[0]),
 				expression: node.Utf8Text(source), file: file, line: node.StartPosition().Row + 1,
 				constructor: constructor, reference: true, kind: "dispatch", state: state,
@@ -525,7 +534,7 @@ func (a *analyzer) collectJavaCalls(
 	}
 }
 
-func (a *analyzer) addJavaCall(
+func (a *analysis) addJavaCall(
 	node *tree_sitter.Node,
 	source []byte,
 	file string,
@@ -542,7 +551,7 @@ func (a *analyzer) addJavaCall(
 	for i := uint(0); i < arguments.NamedChildCount(); i++ {
 		argumentTypes = append(argumentTypes, inferJavaExpressionType(arguments.NamedChild(i), source, variables))
 	}
-	a.java.calls = append(a.java.calls, javaCall{
+	a.calls = append(a.calls, javaCall{
 		caller: caller.id, owner: caller.owner, name: name, receiver: receiver,
 		arguments: argumentTypes, expression: node.Utf8Text(source), file: file,
 		line: node.StartPosition().Row + 1, constructor: constructor,
@@ -631,13 +640,13 @@ func cloneStringMap(source map[string]string) map[string]string {
 	return cloned
 }
 
-func (a *analyzer) resolveJavaCalls() {
-	edges := make(map[string]*Edge)
+func (a *analysis) resolveJavaCalls() {
+	edges := make(map[string]*callgraph.Edge)
 	lineSets := make(map[string]map[uint]bool)
-	for _, call := range a.java.calls {
+	for _, call := range a.calls {
 		target := a.resolveJavaCall(call)
 		if target == nil {
-			a.graph.Unresolved = append(a.graph.Unresolved, UnresolvedCall{
+			a.graph.Unresolved = append(a.graph.Unresolved, callgraph.UnresolvedCall{
 				Caller: call.caller, Expression: call.expression, File: call.file, Line: call.line,
 				Category: a.javaUnresolvedCategory(call), Language: "java",
 			})
@@ -646,7 +655,7 @@ func (a *analyzer) resolveJavaCalls() {
 		key := call.caller + "\x00" + target.id + "\x00" + call.kind
 		edge := edges[key]
 		if edge == nil {
-			edge = &Edge{Source: call.caller, Target: target.id, Kind: call.kind}
+			edge = &callgraph.Edge{Source: call.caller, Target: target.id, Kind: call.kind}
 			edges[key] = edge
 			lineSets[key] = make(map[uint]bool)
 		}
@@ -664,7 +673,7 @@ func (a *analyzer) resolveJavaCalls() {
 	a.graph.Stats.Unresolved = len(a.graph.Unresolved)
 }
 
-func (a *analyzer) resolveJavaCall(call javaCall) *javaCallable {
+func (a *analysis) resolveJavaCall(call javaCall) *javaCallable {
 	owners := a.javaCallOwners(call)
 	var candidates []*javaCallable
 	seen := make(map[string]bool)
@@ -694,12 +703,12 @@ func (a *analyzer) resolveJavaCall(call javaCall) *javaCallable {
 	return nil
 }
 
-func (a *analyzer) javaCallOwners(call javaCall) []string {
+func (a *analysis) javaCallOwners(call javaCall) []string {
 	packageName := a.javaPackageForOwner(call.owner)
 	if call.constructor {
 		switch {
 		case call.explicitSuper:
-			if info := a.java.types[call.owner]; info != nil {
+			if info := a.types[call.owner]; info != nil {
 				if owner := a.resolveJavaType(info.file, info.packageName, info.superclass); owner != "" {
 					return []string{owner}
 				}
@@ -723,14 +732,17 @@ func (a *analyzer) javaCallOwners(call javaCall) []string {
 		return []string{call.owner}
 	}
 	if call.receiver == "super" {
-		if info := a.java.types[call.owner]; info != nil {
+		if info := a.types[call.owner]; info != nil {
 			if owner := a.resolveJavaType(info.file, info.packageName, info.superclass); owner != "" {
 				return []string{owner}
 			}
 		}
 		return nil
 	}
-	receiver := strings.TrimPrefix(call.receiver, "this.")
+	receiver := call.receiver
+	if strings.HasPrefix(receiver, "this.") {
+		receiver = strings.TrimPrefix(receiver, "this.")
+	}
 	if receiverType := call.variables[receiver]; receiverType != "" {
 		if owner := a.resolveJavaType(call.state, packageName, receiverType); owner != "" {
 			return []string{owner}
@@ -742,13 +754,13 @@ func (a *analyzer) javaCallOwners(call javaCall) []string {
 	return nil
 }
 
-func (a *analyzer) javaMethodsForOwner(owner string, name string) []*javaCallable {
+func (a *analysis) javaMethodsForOwner(owner string, name string) []*javaCallable {
 	var methods []*javaCallable
 	seenOwners := make(map[string]bool)
 	seenSignatures := make(map[string]bool)
 	for owner != "" && !seenOwners[owner] {
 		seenOwners[owner] = true
-		for _, method := range a.java.methods[owner+"\x00"+name] {
+		for _, method := range a.methods[owner+"\x00"+name] {
 			signature := strings.Join(method.parameterTypes, "\x00")
 			if !seenSignatures[signature] {
 				methods = append(methods, method)
@@ -758,7 +770,7 @@ func (a *analyzer) javaMethodsForOwner(owner string, name string) []*javaCallabl
 		if name == "<init>" {
 			break
 		}
-		info := a.java.types[owner]
+		info := a.types[owner]
 		if info == nil || info.superclass == "" {
 			break
 		}
@@ -767,7 +779,7 @@ func (a *analyzer) javaMethodsForOwner(owner string, name string) []*javaCallabl
 	return methods
 }
 
-func javaArgumentsCompatible(a *analyzer, state *javaFile, arguments []string, candidate *javaCallable) bool {
+func javaArgumentsCompatible(a *analysis, state *javaFile, arguments []string, candidate *javaCallable) bool {
 	parameterCount := len(candidate.parameterTypes)
 	if candidate.varargs {
 		if len(arguments) < parameterCount-1 {
@@ -795,7 +807,7 @@ func javaArgumentsCompatible(a *analyzer, state *javaFile, arguments []string, c
 	return true
 }
 
-func javaTypesCompatible(a *analyzer, state *javaFile, packageName string, argument string, parameter string) bool {
+func javaTypesCompatible(a *analysis, state *javaFile, packageName string, argument string, parameter string) bool {
 	if argument == "" {
 		return true
 	}
@@ -829,7 +841,7 @@ func isJavaTypeVariable(value string) bool {
 	return unicode.IsUpper(runes[0]) && (len(runes) == 1 || strings.HasSuffix(value, "T"))
 }
 
-func (a *analyzer) resolveJavaType(state *javaFile, packageName string, value string) string {
+func (a *analysis) resolveJavaType(state *javaFile, packageName string, value string) string {
 	value = eraseJavaType(value)
 	array := ""
 	for strings.HasSuffix(value, "[]") {
@@ -840,16 +852,16 @@ func (a *analyzer) resolveJavaType(state *javaFile, packageName string, value st
 		return value + array
 	}
 	if strings.Contains(value, ".") {
-		if alias := a.java.aliases[value]; alias != "" {
+		if alias := a.aliases[value]; alias != "" {
 			return alias + array
 		}
-		if _, exists := a.java.types[value]; exists {
+		if _, exists := a.types[value]; exists {
 			return value + array
 		}
 		root := strings.SplitN(value, ".", 2)[0]
 		if imported := state.imports[root]; imported != "" {
 			resolved := imported + strings.TrimPrefix(value, root)
-			if alias := a.java.aliases[resolved]; alias != "" {
+			if alias := a.aliases[resolved]; alias != "" {
 				resolved = alias
 			}
 			return resolved + array
@@ -859,16 +871,16 @@ func (a *analyzer) resolveJavaType(state *javaFile, packageName string, value st
 		}
 	}
 	if imported := state.imports[value]; imported != "" {
-		if alias := a.java.aliases[imported]; alias != "" {
+		if alias := a.aliases[imported]; alias != "" {
 			imported = alias
 		}
 		return imported + array
 	}
-	samePackage := qualified(packageName, value)
-	if alias := a.java.aliases[samePackage]; alias != "" {
+	samePackage := langutil.Qualified(packageName, value)
+	if alias := a.aliases[samePackage]; alias != "" {
 		return alias + array
 	}
-	if _, exists := a.java.types[samePackage]; exists {
+	if _, exists := a.types[samePackage]; exists {
 		return samePackage + array
 	}
 	if javaLangTypes[value] {
@@ -876,21 +888,21 @@ func (a *analyzer) resolveJavaType(state *javaFile, packageName string, value st
 	}
 	var matches []string
 	for _, wildcard := range state.wildcard {
-		candidate := qualified(wildcard, value)
-		if _, exists := a.java.types[candidate]; exists {
+		candidate := langutil.Qualified(wildcard, value)
+		if _, exists := a.types[candidate]; exists {
 			matches = append(matches, candidate)
 		}
 	}
 	if len(matches) == 1 {
 		return matches[0] + array
 	}
-	if candidates := a.java.simple[value]; len(candidates) == 1 {
+	if candidates := a.simple[value]; len(candidates) == 1 {
 		return candidates[0] + array
 	}
 	return ""
 }
 
-func (a *analyzer) javaUnresolvedCategory(call javaCall) string {
+func (a *analysis) javaUnresolvedCategory(call javaCall) string {
 	values := []string{call.receiver}
 	if call.constructor {
 		values = []string{call.receiver}
@@ -930,15 +942,15 @@ func isJavaRuntime(value string) bool {
 	return strings.HasPrefix(value, "java.") || strings.HasPrefix(value, "javax.") || strings.HasPrefix(value, "jdk.")
 }
 
-func (a *analyzer) javaPackageForOwner(owner string) string {
-	if info := a.java.types[owner]; info != nil {
+func (a *analysis) javaPackageForOwner(owner string) string {
+	if info := a.types[owner]; info != nil {
 		return info.packageName
 	}
 	return ""
 }
 
-func (a *analyzer) addJavaDispatchEdges() {
-	functions := make(map[string]*Function, len(a.graph.Nodes))
+func (a *analysis) addJavaDispatchEdges() {
+	functions := make(map[string]*callgraph.Function, len(a.graph.Nodes))
 	for index := range a.graph.Nodes {
 		functions[a.graph.Nodes[index].ID] = &a.graph.Nodes[index]
 	}
@@ -946,16 +958,16 @@ func (a *analyzer) addJavaDispatchEdges() {
 	for _, edge := range a.graph.Edges {
 		existing[edge.Source+"\x00"+edge.Target+"\x00"+edge.Kind] = true
 	}
-	for _, override := range a.java.callables {
+	for _, override := range a.callables {
 		function := functions[override.id]
-		if function == nil || !contains(function.Decorators, "Override") {
+		if function == nil || !slices.Contains(function.Decorators, "Override") {
 			continue
 		}
-		info := a.java.types[override.owner]
+		info := a.types[override.owner]
 		for info != nil && info.superclass != "" {
 			superclass := a.resolveJavaType(info.file, info.packageName, info.superclass)
 			var matches []*javaCallable
-			for _, candidate := range a.java.methods[superclass+"\x00"+override.name] {
+			for _, candidate := range a.methods[superclass+"\x00"+override.name] {
 				if len(candidate.parameterTypes) == len(override.parameterTypes) {
 					matches = append(matches, candidate)
 				}
@@ -963,7 +975,7 @@ func (a *analyzer) addJavaDispatchEdges() {
 			if len(matches) == 1 {
 				key := matches[0].id + "\x00" + override.id + "\x00dispatch"
 				if !existing[key] {
-					a.graph.Edges = append(a.graph.Edges, Edge{
+					a.graph.Edges = append(a.graph.Edges, callgraph.Edge{
 						Source: matches[0].id, Target: override.id, Kind: "dispatch", Count: 1,
 						Lines: []uint{function.Line},
 					})
@@ -971,33 +983,7 @@ func (a *analyzer) addJavaDispatchEdges() {
 				}
 				break
 			}
-			info = a.java.types[superclass]
-		}
-	}
-}
-
-func (a *analyzer) markJavaFrameworkEntrypoints() {
-	for index := range a.graph.Nodes {
-		function := &a.graph.Nodes[index]
-		if function.Language != "java" || function.Kind != "method" {
-			continue
-		}
-		info := a.java.types[function.Class]
-		if info == nil {
-			continue
-		}
-		superclass := eraseJavaType(info.superclass)
-		grpc := strings.Index(superclass, "Grpc.")
-		if grpc < 0 || !strings.HasSuffix(superclass, "ImplBase") {
-			continue
-		}
-		service := superclass[:grpc]
-		if index := strings.LastIndexByte(service, '.'); index >= 0 {
-			service = service[index+1:]
-		}
-		if a.java.services[service][function.Name] {
-			function.Entrypoint = true
-			function.EntryKind = "grpc"
+			info = a.types[superclass]
 		}
 	}
 }
@@ -1019,4 +1005,15 @@ var javaLangTypes = map[string]bool{
 	"Long": true, "Math": true, "Number": true, "Object": true, "Record": true,
 	"RuntimeException": true, "Short": true, "String": true, "StringBuilder": true,
 	"System": true, "Thread": true, "Throwable": true, "Void": true,
+}
+
+func isGeneratedJava(source []byte) bool {
+	lines := bytes.Split(source, []byte("\n"))
+	if len(lines) > 50 {
+		lines = lines[:50]
+	}
+	header := string(bytes.Join(lines, []byte("\n")))
+	return strings.Contains(header, "@Generated") ||
+		strings.Contains(header, "@javax.annotation.Generated") ||
+		strings.Contains(header, "@javax.annotation.processing.Generated")
 }

@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"net/http"
@@ -11,6 +11,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/derek-shaw/agent-work-visualizer/internal/lang/langtest"
+	"github.com/derek-shaw/agent-work-visualizer/internal/transcript/transcripttest"
 )
 
 func TestRootChoices(t *testing.T) {
@@ -24,7 +27,7 @@ func TestRootChoices(t *testing.T) {
 	session := func(project string, name string, cwd string, changed time.Time) {
 		t.Helper()
 		transcript := filepath.Join(projects, project, name)
-		writeTranscript(t, transcript, sessionStart(cwd))
+		transcripttest.WriteTranscript(t, transcript, transcripttest.SessionStart(cwd))
 		if err := os.Chtimes(transcript, changed, changed); err != nil {
 			t.Fatal(err)
 		}
@@ -53,8 +56,8 @@ func TestRootChoices(t *testing.T) {
 		// gives the time. The newer directory sorts first, so the older one
 		// must not replace its time.
 		session("a-beta-copy", "s1.jsonl", beta, now.Add(-90*time.Minute))
-		writeFixture(t, filepath.Join(projects, "alpha"), "notes.txt", "x")
-		writeFixture(t, projects, "file.jsonl", "{}")
+		langtest.WriteFixture(t, filepath.Join(projects, "alpha"), "notes.txt", "x")
+		langtest.WriteFixture(t, projects, "file.jsonl", "{}")
 
 		got := rootChoices(projects, folder("plain"), since)
 		want := []rootChoice{
@@ -97,7 +100,7 @@ func TestRootChoices(t *testing.T) {
 		folder("repo/.worktrees/x/sub")
 		projects := filepath.Join(base, "worktree-projects")
 		transcript := filepath.Join(projects, "repo-sub", "s1.jsonl")
-		writeTranscript(t, transcript, sessionStart(inside))
+		transcripttest.WriteTranscript(t, transcript, transcripttest.SessionStart(inside))
 		if err := os.Chtimes(transcript, now, now); err != nil {
 			t.Fatal(err)
 		}
@@ -130,7 +133,7 @@ func TestRootChoices(t *testing.T) {
 		live := &liveServer{projects: projects, view: &rootView{}}
 		recorder := httptest.NewRecorder()
 		live.serveRoots(recorder, httptest.NewRequest(http.MethodGet, "/roots", nil))
-		if body := recorder.Body.String(); !strings.HasPrefix(body, `{"current":"","choices":[{"path":`+mustJSON(t, inside)+`,"session":`) {
+		if body := recorder.Body.String(); !strings.HasPrefix(body, `{"current":"","choices":[{"path":`+transcripttest.MustJSON(t, inside)+`,"session":`) {
 			t.Fatalf("roots = %s, want no current folder and the session folder first", body)
 		}
 

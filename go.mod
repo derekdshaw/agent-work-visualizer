@@ -1,4 +1,4 @@
-module github.com/derek-shaw/code-graph-visualizer
+module github.com/derek-shaw/agent-work-visualizer
 
 go 1.24
 

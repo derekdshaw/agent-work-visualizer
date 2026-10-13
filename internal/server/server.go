@@ -1,4 +1,6 @@
-package main
+// Package server serves the live agent view: the call graph of a folder and
+// the agent activity that Claude Code session transcripts record for it.
+package server
 
 import (
 	"context"
@@ -18,13 +20,17 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/derek-shaw/agent-work-visualizer/internal/activity"
+	"github.com/derek-shaw/agent-work-visualizer/internal/analyzer"
+	"github.com/derek-shaw/agent-work-visualizer/internal/callgraph"
+	"github.com/derek-shaw/agent-work-visualizer/internal/transcript"
 )
 
 const (
-	defaultServePort = 7777
-	pollInterval     = 500 * time.Millisecond
-	scanEveryPolls   = 4
-	refreshDelay     = 2 * time.Second
+	pollInterval   = 500 * time.Millisecond
+	scanEveryPolls = 4
+	refreshDelay   = 2 * time.Second
 	// gateHoldLimit is the longest time that the gate holds a tool call. It
 	// is shorter than the curl and hook timeouts of the PreToolUse hook, so
 	// the agent receives the denial instead of a timeout.
@@ -33,28 +39,24 @@ const (
 	gateDenial = `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"The user paused agent work from the live view. Stop and wait for the user."}}`
 )
 
-// runServe analyzes ROOT, follows Claude Code session transcripts for agent
-// work under ROOT, and serves a live viewer on 127.0.0.1 until it receives an
-// interrupt. Without ROOT, the viewer starts with no folder, and the user picks
-// one in the page. The server listens on loopback only because the graph
-// contains the source of every callable.
-func runServe(arguments []string) error {
-	root, port, err := parseServeArguments(arguments)
-	if err != nil {
-		return err
-	}
-	projects, err := claudeProjectsDir()
+// Run analyzes root with a, follows Claude Code session transcripts for agent
+// work under root, and serves a live viewer on 127.0.0.1:port until it
+// receives an interrupt. With an empty root, the viewer starts with no folder,
+// and the user picks one in the page. The server listens on loopback only
+// because the graph contains the source of every callable.
+func Run(a *analyzer.Analyzer, root string, port int) error {
+	projects, err := transcript.ProjectsDir()
 	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	var workers sync.WaitGroup
 	// Deferred calls run in reverse order. cancel ends the workers of each
-	// folder, and then runServe waits for them.
+	// folder, and then Run waits for them.
 	defer workers.Wait()
 	defer cancel()
 	live := &liveServer{projects: projects}
-	live.open = func(root string) (*rootView, error) { return openRoot(ctx, &workers, projects, root) }
+	live.open = func(root string) (*rootView, error) { return openRoot(ctx, &workers, a, projects, root) }
 	if root == "" {
 		live.view, err = emptyView()
 	} else if root, err = resolveRoot(root); err == nil {
@@ -93,40 +95,6 @@ func runServe(arguments []string) error {
 		return nil
 	}
 	return fmt.Errorf("serve: %w", err)
-}
-
-// parseServeArguments returns ROOT, or "" if the arguments name no ROOT, and
-// the port.
-func parseServeArguments(arguments []string) (root string, port int, err error) {
-	usage := errors.New("usage: code-graph-visualizer serve [ROOT] [--port N]")
-	port = defaultServePort
-	for index := 0; index < len(arguments); index++ {
-		switch arguments[index] {
-		case "--port":
-			index++
-			if index >= len(arguments) {
-				return "", 0, errors.New("--port requires a number")
-			}
-			port, err = strconv.Atoi(arguments[index])
-			if err != nil || port < 0 || port > 65535 {
-				return "", 0, fmt.Errorf("invalid port %q", arguments[index])
-			}
-		case "--include-tests":
-			// serve always includes tests. The option stays valid for
-			// commands that already pass it.
-		case "-h", "--help":
-			return "", 0, usage
-		default:
-			if len(arguments[index]) > 0 && arguments[index][0] == '-' {
-				return "", 0, fmt.Errorf("unknown option %s", arguments[index])
-			}
-			if root != "" {
-				return "", 0, errors.New("at most one ROOT is allowed")
-			}
-			root = arguments[index]
-		}
-	}
-	return root, port, nil
 }
 
 // liveServer shows the view of one folder at a time and opens another folder
@@ -188,7 +156,7 @@ func newInstance() string {
 func emptyView() (*rootView, error) {
 	view := &rootView{instance: newInstance()}
 	// The viewer reads nodes, edges, and unresolved as JSON arrays. A nil slice encodes as null.
-	if _, err := view.setGraph(&Graph{Nodes: []Function{}, Edges: []Edge{}, Unresolved: []UnresolvedCall{}}); err != nil {
+	if _, err := view.setGraph(&callgraph.Graph{Nodes: []callgraph.Function{}, Edges: []callgraph.Edge{}, Unresolved: []callgraph.UnresolvedCall{}}); err != nil {
 		return nil, err
 	}
 	return view, nil
@@ -197,11 +165,11 @@ func emptyView() (*rootView, error) {
 // openRoot analyzes root and returns its view with a running transcript
 // watcher and refresh loop. The workers stop when ctx ends or the view stops.
 // workers counts them.
-func openRoot(ctx context.Context, workers *sync.WaitGroup, projects string, root string) (*rootView, error) {
+func openRoot(ctx context.Context, workers *sync.WaitGroup, a *analyzer.Analyzer, projects string, root string) (*rootView, error) {
 	// An agent reads and edits tests, so the live graph includes test files.
 	// Without them, the viewer has no node to open for a test callable.
-	options := Options{IncludeTests: true, bazel: &bazelCache{}}
-	graph, err := Analyze(root, options)
+	options := analyzer.Options{IncludeTests: true}
+	graph, err := a.Analyze(root, options)
 	if err != nil {
 		return nil, err
 	}
@@ -211,20 +179,20 @@ func openRoot(ctx context.Context, workers *sync.WaitGroup, projects string, roo
 	}
 	ctx, view.cancel = context.WithCancel(ctx)
 	edits := make(chan struct{}, 1)
-	watcher := newTranscriptWatcher(projects, root)
+	watcher := transcript.NewWatcher(projects, root)
 	// The gate holds only the sessions that the view follows. The first scan
 	// runs before the server shows the view, so a pause holds them at once.
-	watcher.scan()
-	view.setSessions(watcher.sessionIDs())
-	mapper := newActivityMapper(root)
+	watcher.Scan()
+	view.setSessions(watcher.SessionIDs())
+	mapper := activity.NewMapper(root, a)
 	workers.Add(2)
 	go func() {
 		defer workers.Done()
-		view.watch(ctx, watcher, mapper, edits)
+		view.watch(ctx, a, watcher, mapper, edits)
 	}()
 	go func() {
 		defer workers.Done()
-		view.refresh(ctx, edits, refreshDelay, func() (*Graph, error) { return Analyze(root, options) })
+		view.refresh(ctx, edits, refreshDelay, func() (*callgraph.Graph, error) { return a.Analyze(root, options) })
 	}()
 	return view, nil
 }
@@ -307,7 +275,7 @@ func (v *rootView) stop() {
 
 // setGraph renders the viewer page and graph payload for graph under the next
 // version number and returns that number.
-func (v *rootView) setGraph(graph *Graph) (int, error) {
+func (v *rootView) setGraph(graph *callgraph.Graph) (int, error) {
 	data, err := marshalGraph(graph)
 	if err != nil {
 		return 0, err
@@ -577,22 +545,22 @@ func (v *rootView) serveEvents(w http.ResponseWriter, r *http.Request) {
 
 // watch polls transcripts and publishes task and activity events. After a
 // poll that found an edit to a source file, it signals edits without blocking.
-func (v *rootView) watch(ctx context.Context, watcher *transcriptWatcher, mapper *activityMapper, edits chan<- struct{}) {
+func (v *rootView) watch(ctx context.Context, a *analyzer.Analyzer, watcher *transcript.Watcher, mapper *activity.Mapper, edits chan<- struct{}) {
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 	for polls := 0; ; polls++ {
 		if polls%scanEveryPolls == 0 {
-			watcher.scan()
-			v.setSessions(watcher.sessionIDs())
+			watcher.Scan()
+			v.setSessions(watcher.SessionIDs())
 		}
-		events := watcher.poll()
-		for _, note := range watcher.takeNotes() {
+		events := watcher.Poll()
+		for _, note := range watcher.TakeNotes() {
 			v.publish("task", note)
 		}
 		edited := false
-		for _, activity := range mapper.mapEvents(events) {
-			v.publish("activity", activity)
-			if activity.Kind == "edit" && sourceLanguage(activity.File) != "" {
+		for _, mapped := range mapper.Map(events) {
+			v.publish("activity", mapped)
+			if mapped.Kind == "edit" && a.Supports(mapped.File) {
 				edited = true
 			}
 		}
@@ -612,7 +580,7 @@ func (v *rootView) watch(ctx context.Context, watcher *transcriptWatcher, mapper
 
 // refresh reanalyzes the root after edits stop for delay. A failed analysis
 // keeps the current graph and publishes a status event.
-func (v *rootView) refresh(ctx context.Context, edits <-chan struct{}, delay time.Duration, analyze func() (*Graph, error)) {
+func (v *rootView) refresh(ctx context.Context, edits <-chan struct{}, delay time.Duration, analyze func() (*callgraph.Graph, error)) {
 	timer := time.NewTimer(delay)
 	timer.Stop()
 	for {

@@ -473,7 +473,7 @@ function updateStatus(data){
   if(activeView()==="activity"){status.textContent=`${activityLog.length} agent events · ${activity.size} callables touched`;return}
   if(activeView()==="layers"){status.textContent=`${data.nodes.length} directories · ${data.links.length} cross-directory call links`;return}
   status.textContent=`${data.nodes.length}/${DATA.nodes.length} visible · ${data.links.filter(edge=>edge.kind!=="trail").length} edges${graphScope?` · ${graphScope.label}`:` · ${DATA.unresolved.length} unresolved`}`;
-  status.title=`${DATA.stats.projectDefinitions} project definitions · ${DATA.stats.dependencyDefinitions} dependency definitions. Unresolved call sites could not be mapped to a callable defined in the analyzed source.`;
+  status.title=`${DATA.stats.definitions} definitions. Unresolved call sites could not be mapped to a callable defined in the analyzed source.`;
 }
 // Layer nodes are project source directories. Layer links sum the calls between two directories.
 function layerData(){

@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"bufio"
@@ -15,18 +15,25 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/derek-shaw/agent-work-visualizer/internal/activity"
+	"github.com/derek-shaw/agent-work-visualizer/internal/analyzer"
+	"github.com/derek-shaw/agent-work-visualizer/internal/callgraph"
+	"github.com/derek-shaw/agent-work-visualizer/internal/lang/langtest"
+	"github.com/derek-shaw/agent-work-visualizer/internal/lang/python"
+	"github.com/derek-shaw/agent-work-visualizer/internal/transcript"
+	"github.com/derek-shaw/agent-work-visualizer/internal/transcript/transcripttest"
 )
 
 func TestServeRoutesRenderTheCurrentGraphVersion(t *testing.T) {
 	live := &liveServer{view: &rootView{instance: "abc"}}
-	graph := &Graph{Nodes: []Function{{ID: "a", Name: "alpha", Source: "/*__LIVE__*/null"}}}
+	graph := &callgraph.Graph{Nodes: []callgraph.Function{{ID: "a", Name: "alpha", Source: "/*__LIVE__*/null"}}}
 	if version, err := live.view.setGraph(graph); err != nil || version != 1 {
 		t.Fatalf("setGraph = %d, %v, want version 1", version, err)
 	}
@@ -43,7 +50,7 @@ func TestServeRoutesRenderTheCurrentGraphVersion(t *testing.T) {
 	}
 	assertGraphPayload(t, getBody(t, server.URL+"/graph", "application/json"), 1, "a")
 
-	if version, err := live.view.setGraph(&Graph{Nodes: []Function{{ID: "b", Name: "beta"}}}); err != nil || version != 2 {
+	if version, err := live.view.setGraph(&callgraph.Graph{Nodes: []callgraph.Function{{ID: "b", Name: "beta"}}}); err != nil || version != 2 {
 		t.Fatalf("second setGraph = %d, %v, want version 2", version, err)
 	}
 	if page := getBody(t, server.URL+"/", "text/html; charset=utf-8"); !strings.Contains(page, `const LIVE={"version":2,"instance":"abc","root":""};`) {
@@ -63,7 +70,7 @@ func TestServeRoutesRenderTheCurrentGraphVersion(t *testing.T) {
 
 func TestServeRoutesRejectOtherHosts(t *testing.T) {
 	live := &liveServer{view: &rootView{}}
-	if _, err := live.view.setGraph(&Graph{}); err != nil {
+	if _, err := live.view.setGraph(&callgraph.Graph{}); err != nil {
 		t.Fatal(err)
 	}
 	handler := live.routes()
@@ -89,16 +96,6 @@ func TestServeRoutesRejectOtherHosts(t *testing.T) {
 				t.Errorf("GET %s with Host %q = %d, want %d", path, host, recorder.Code, want)
 			}
 		}
-	}
-}
-
-func TestRenderHTMLStaticReportHasNoLiveState(t *testing.T) {
-	rendered, err := renderHTML(&Graph{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(rendered), "const LIVE=null;") {
-		t.Fatal("static report does not set LIVE to null")
 	}
 }
 
@@ -315,14 +312,14 @@ func waitForPause(t *testing.T, view *rootView, want string) {
 func TestLiveEventJSONFieldNames(t *testing.T) {
 	// The viewer reads these field names.
 	time := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	activity := Activity{
+	activity := activity.Activity{
 		Time: time, Session: "s1", Agent: "main", Tool: "Write", Kind: "edit", File: "a.py", Line: 2,
-		Functions: []ActivityFunction{{Key: activityKey("a.py", "a.f"), Name: "f", Line: 1, Hunks: []int{0}}},
-		Hunks:     []patchHunk{{OldStart: 1, OldLines: 1, NewStart: 1, NewLines: 2, Lines: []string{" def f():", "+    x = 1"}}},
+		Functions: []activity.Callable{{Key: activity.Key("a.py", "a.f"), Name: "f", Line: 1, Hunks: []int{0}}},
+		Hunks:     []transcript.Hunk{{OldStart: 1, OldLines: 1, NewStart: 1, NewLines: 2, Lines: []string{" def f():", "+    x = 1"}}},
 		Created:   true,
 		Note:      "n",
 	}
-	note := taskNote{Time: time, Session: "s1", Agent: "main", Kind: "step", Text: "Run"}
+	note := transcript.Note{Time: time, Session: "s1", Agent: "main", Kind: "step", Text: "Run"}
 	tests := map[string]struct {
 		value any
 		want  string
@@ -385,15 +382,15 @@ func postControl(t *testing.T, url string, origin string, want int) {
 func TestRefreshPublishesGraphOrKeepsPreviousGraph(t *testing.T) {
 	const delay = 200 * time.Millisecond
 	live := &liveServer{view: &rootView{}}
-	if _, err := live.view.setGraph(&Graph{}); err != nil {
+	if _, err := live.view.setGraph(&callgraph.Graph{}); err != nil {
 		t.Fatal(err)
 	}
 	var calls atomic.Int32
-	analyze := func() (*Graph, error) {
+	analyze := func() (*callgraph.Graph, error) {
 		if calls.Add(1) == 1 {
 			return nil, errors.New("broken.py:1:1: syntax error")
 		}
-		return &Graph{Nodes: []Function{{ID: "fresh"}}}, nil
+		return &callgraph.Graph{Nodes: []callgraph.Function{{ID: "fresh"}}}, nil
 	}
 	edits := make(chan struct{}, 1)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -437,9 +434,9 @@ func TestRefreshWaitsForEditsToStop(t *testing.T) {
 	const delay = 200 * time.Millisecond
 	live := &liveServer{view: &rootView{}}
 	analyzed := make(chan time.Time, 4)
-	analyze := func() (*Graph, error) {
+	analyze := func() (*callgraph.Graph, error) {
 		analyzed <- time.Now()
-		return &Graph{}, nil
+		return &callgraph.Graph{}, nil
 	}
 	edits := make(chan struct{}, 1)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -479,10 +476,10 @@ func TestRefreshAnalyzesAnEditThatArrivesDuringAnalysis(t *testing.T) {
 	live := &liveServer{view: &rootView{}}
 	started := make(chan struct{}, 2)
 	release := make(chan struct{})
-	analyze := func() (*Graph, error) {
+	analyze := func() (*callgraph.Graph, error) {
 		started <- struct{}{}
 		<-release
-		return &Graph{}, nil
+		return &callgraph.Graph{}, nil
 	}
 	edits := make(chan struct{}, 1)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -513,7 +510,7 @@ func expectSignal(t *testing.T, signals <-chan struct{}, message string) {
 	}
 }
 
-func TestRunServeFollowsSessionsUnderASymlinkedRoot(t *testing.T) {
+func TestRunFollowsSessionsUnderASymlinkedRoot(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	config := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", config)
@@ -522,17 +519,17 @@ func TestRunServeFollowsSessionsUnderASymlinkedRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := filepath.Join(base, "repo")
-	writeFixture(t, root, "app.py", "def run():\n    return 1\n")
-	writeFixture(t, root, "test_app.py", "def test_run():\n    return 1\n")
+	langtest.WriteFixture(t, root, "app.py", "def run():\n    return 1\n")
+	langtest.WriteFixture(t, root, "test_app.py", "def test_run():\n    return 1\n")
 	link := filepath.Join(t.TempDir(), "link")
 	if err := os.Symlink(root, link); err != nil {
 		t.Fatal(err)
 	}
 	// Claude Code records the real path of the working directory.
-	session := filepath.Join(config, "projects", encodeProjectPath(root), "s1.jsonl")
-	writeTranscript(t, session, sessionStart(root), toolUseLine("r1", "Read"), toolResultLine("r1", readResult(filepath.Join(root, "app.py"), 1, 2)))
+	session := filepath.Join(config, "projects", transcript.EncodeProjectPath(root), "s1.jsonl")
+	transcripttest.WriteTranscript(t, session, transcripttest.SessionStart(root), transcripttest.ToolUseLine("r1", "Read"), transcripttest.ToolResultLine("r1", transcripttest.ReadResult(filepath.Join(root, "app.py"), 1, 2)))
 
-	url, result := startServe(t, link, "--port", "0")
+	url, result := startServe(t, link)
 	if page := getBody(t, url+"/", "text/html; charset=utf-8"); !strings.Contains(page, `const LIVE={"version":1,"instance":"`) {
 		t.Fatal("page does not carry live version 1")
 	}
@@ -556,9 +553,9 @@ func TestRunServeFollowsSessionsUnderASymlinkedRoot(t *testing.T) {
 	}
 
 	// A source edit makes the server analyze root again.
-	writeFixture(t, root, "app.py", "def run():\n    return added()\n\ndef added():\n    return 1\n")
-	patch := []patchHunk{{OldStart: 2, OldLines: 1, NewStart: 2, NewLines: 4, Lines: []string{"-    return 1", "+    return added()", "+", "+def added():", "+    return 1"}}}
-	appendTranscript(t, session, mustJSON(t, toolUseLine("e1", "Edit"))+"\n"+mustJSON(t, toolResultLine("e1", map[string]any{"filePath": filepath.Join(root, "app.py"), "structuredPatch": patch}))+"\n")
+	langtest.WriteFixture(t, root, "app.py", "def run():\n    return added()\n\ndef added():\n    return 1\n")
+	patch := []transcript.Hunk{{OldStart: 2, OldLines: 1, NewStart: 2, NewLines: 4, Lines: []string{"-    return 1", "+    return added()", "+", "+def added():", "+    return 1"}}}
+	transcripttest.AppendTranscript(t, session, transcripttest.MustJSON(t, transcripttest.ToolUseLine("e1", "Edit"))+"\n"+transcripttest.MustJSON(t, transcripttest.ToolResultLine("e1", map[string]any{"filePath": filepath.Join(root, "app.py"), "structuredPatch": patch}))+"\n")
 	for deadline := time.After(15 * time.Second); ; {
 		select {
 		case event := <-events:
@@ -581,20 +578,20 @@ func TestRunServeFollowsSessionsUnderASymlinkedRoot(t *testing.T) {
 	stopServe(t, result)
 }
 
-// startServe runs runServe with arguments and returns the server URL and the
-// channel that receives the result of runServe.
-func startServe(t *testing.T, arguments ...string) (string, <-chan error) {
+// startServe runs Run for root on a free port and returns the server URL and
+// the channel that receives the result of Run.
+func startServe(t *testing.T, root string) (string, <-chan error) {
 	t.Helper()
 	logs := &lockedBuffer{}
 	log.SetOutput(logs)
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
 	result := make(chan error, 1)
-	go func() { result <- runServe(arguments) }()
+	go func() { result <- Run(pythonAnalyzer(t), root, 0) }()
 	address := regexp.MustCompile(`Live view at (http://127\.0\.0\.1:\d+)`)
 	for deadline := time.Now().Add(10 * time.Second); ; {
 		select {
 		case err := <-result:
-			t.Fatalf("runServe returned %v before it served", err)
+			t.Fatalf("Run returned %v before it served", err)
 		case <-time.After(10 * time.Millisecond):
 		}
 		if match := address.FindStringSubmatch(logs.String()); match != nil {
@@ -605,7 +602,7 @@ func startServe(t *testing.T, arguments ...string) (string, <-chan error) {
 	}
 }
 
-// stopServe sends SIGINT to the test process and waits for runServe to
+// stopServe sends SIGINT to the test process and waits for Run to
 // return nil.
 func stopServe(t *testing.T, result <-chan error) {
 	t.Helper()
@@ -615,14 +612,14 @@ func stopServe(t *testing.T, result <-chan error) {
 	select {
 	case err := <-result:
 		if err != nil {
-			t.Fatalf("runServe = %v, want nil after SIGINT", err)
+			t.Fatalf("Run = %v, want nil after SIGINT", err)
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("runServe did not stop after SIGINT")
+		t.Fatal("Run did not stop after SIGINT")
 	}
 }
 
-func TestRunServeWithoutRootOpensThePickedFolder(t *testing.T) {
+func TestRunWithoutRootOpensThePickedFolder(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	config := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", config)
@@ -631,11 +628,11 @@ func TestRunServeWithoutRootOpensThePickedFolder(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := filepath.Join(base, "repo")
-	writeFixture(t, root, "app.py", "def run():\n    return 1\n")
-	writeTranscript(t, filepath.Join(config, "projects", encodeProjectPath(root), "s1.jsonl"),
-		sessionStart(root), toolUseLine("r1", "Read"), toolResultLine("r1", readResult(filepath.Join(root, "app.py"), 1, 2)))
+	langtest.WriteFixture(t, root, "app.py", "def run():\n    return 1\n")
+	transcripttest.WriteTranscript(t, filepath.Join(config, "projects", transcript.EncodeProjectPath(root), "s1.jsonl"),
+		transcripttest.SessionStart(root), transcripttest.ToolUseLine("r1", "Read"), transcripttest.ToolResultLine("r1", transcripttest.ReadResult(filepath.Join(root, "app.py"), 1, 2)))
 
-	url, result := startServe(t, "--port", "0")
+	url, result := startServe(t, "")
 	page := getBody(t, url+"/", "text/html; charset=utf-8")
 	instance := regexp.MustCompile(`const LIVE=\{"version":1,"instance":"([^"]+)","root":""\};`).FindStringSubmatch(page)
 	if instance == nil {
@@ -655,9 +652,9 @@ func TestRunServeWithoutRootOpensThePickedFolder(t *testing.T) {
 		t.Fatalf("roots = %+v, want no current folder and the session folder %s", roots, root)
 	}
 	events := openEvents(t, url+"/events?instance="+instance[1], "")
-	postOpen(t, url, mustJSON(t, map[string]string{"path": root}), http.StatusNoContent, "")
+	postOpen(t, url, transcripttest.MustJSON(t, map[string]string{"path": root}), http.StatusNoContent, "")
 	expectEvent(t, events, serverEvent{id: instance[1] + "-1", name: "reload", data: "{}"})
-	if page := getBody(t, url+"/", "text/html; charset=utf-8"); !strings.Contains(page, `"root":`+mustJSON(t, root)+`};`) {
+	if page := getBody(t, url+"/", "text/html; charset=utf-8"); !strings.Contains(page, `"root":`+transcripttest.MustJSON(t, root)+`};`) {
 		t.Fatal("page after the switch does not carry the opened folder")
 	}
 	// The workers of the opened folder follow its session.
@@ -683,7 +680,7 @@ func TestServeOpenFolderShowsTheNewFolder(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := &rootView{root: "/first", instance: "one"}
-	if _, err := first.setGraph(&Graph{}); err != nil {
+	if _, err := first.setGraph(&callgraph.Graph{}); err != nil {
 		t.Fatal(err)
 	}
 	var stopped atomic.Bool
@@ -693,7 +690,7 @@ func TestServeOpenFolderShowsTheNewFolder(t *testing.T) {
 	live.open = func(root string) (*rootView, error) {
 		view := &rootView{root: root, instance: "two"}
 		view.setSessions([]string{"s2"})
-		_, err := view.setGraph(&Graph{Nodes: []Function{{ID: "b", Name: "beta"}}})
+		_, err := view.setGraph(&callgraph.Graph{Nodes: []callgraph.Function{{ID: "b", Name: "beta"}}})
 		return view, err
 	}
 	server := httptest.NewServer(live.routes())
@@ -706,7 +703,7 @@ func TestServeOpenFolderShowsTheNewFolder(t *testing.T) {
 	go func() { held <- postGate(t, server.URL, `{"session_id":"s1"}`) }()
 	waitForPause(t, first, `{"paused":true,"waiting":1}`)
 	events := openEvents(t, server.URL+"/events?instance=one", "")
-	postOpen(t, server.URL, mustJSON(t, map[string]string{"path": folder}), http.StatusNoContent, "")
+	postOpen(t, server.URL, transcripttest.MustJSON(t, map[string]string{"path": folder}), http.StatusNoContent, "")
 	for deadline := time.After(5 * time.Second); ; {
 		select {
 		case event := <-events:
@@ -721,11 +718,11 @@ func TestServeOpenFolderShowsTheNewFolder(t *testing.T) {
 	if !stopped.Load() {
 		t.Fatal("the workers of the first folder did not stop")
 	}
-	if page := getBody(t, server.URL+"/", "text/html; charset=utf-8"); !strings.Contains(page, `const LIVE={"version":1,"instance":"two","root":`+mustJSON(t, folder)+`};`) {
+	if page := getBody(t, server.URL+"/", "text/html; charset=utf-8"); !strings.Contains(page, `const LIVE={"version":1,"instance":"two","root":`+transcripttest.MustJSON(t, folder)+`};`) {
 		t.Fatal("page does not show the new folder")
 	}
 	assertGraphPayload(t, getBody(t, server.URL+"/graph", "application/json"), 1, "b")
-	if roots := getBody(t, server.URL+"/roots", "application/json"); !strings.HasPrefix(roots, `{"current":`+mustJSON(t, folder)+`,"choices":[`) {
+	if roots := getBody(t, server.URL+"/roots", "application/json"); !strings.HasPrefix(roots, `{"current":`+transcripttest.MustJSON(t, folder)+`,"choices":[`) {
 		t.Fatalf("roots = %s, want the new folder as the current folder", roots)
 	}
 	// A page of the first folder that connects later reloads.
@@ -760,9 +757,9 @@ func TestServeOpenFolderKeepsTheCurrentFolderOnError(t *testing.T) {
 		t.Fatal(err)
 	}
 	file := filepath.Join(folder, "file.txt")
-	writeFixture(t, folder, "file.txt", "x")
+	langtest.WriteFixture(t, folder, "file.txt", "x")
 	first := &rootView{root: "/first", instance: "one"}
-	if _, err := first.setGraph(&Graph{}); err != nil {
+	if _, err := first.setGraph(&callgraph.Graph{}); err != nil {
 		t.Fatal(err)
 	}
 	live := &liveServer{view: first}
@@ -785,9 +782,9 @@ func TestServeOpenFolderKeepsTheCurrentFolderOnError(t *testing.T) {
 	}{
 		{`not json`, http.StatusBadRequest, "The request names no folder."},
 		{`{"path":"  "}`, http.StatusBadRequest, "The request names no folder."},
-		{mustJSON(t, map[string]string{"path": filepath.Join(folder, "missing")}), http.StatusUnprocessableEntity, "resolve root:"},
-		{mustJSON(t, map[string]string{"path": file}), http.StatusUnprocessableEntity, "is not a folder"},
-		{mustJSON(t, map[string]string{"path": folder}), http.StatusUnprocessableEntity, "broken.py:1:1: syntax error"},
+		{transcripttest.MustJSON(t, map[string]string{"path": filepath.Join(folder, "missing")}), http.StatusUnprocessableEntity, "resolve root:"},
+		{transcripttest.MustJSON(t, map[string]string{"path": file}), http.StatusUnprocessableEntity, "is not a folder"},
+		{transcripttest.MustJSON(t, map[string]string{"path": folder}), http.StatusUnprocessableEntity, "broken.py:1:1: syntax error"},
 	}
 	for _, test := range tests {
 		postOpen(t, server.URL, test.body, test.status, test.text)
@@ -798,11 +795,11 @@ func TestServeOpenFolderKeepsTheCurrentFolderOnError(t *testing.T) {
 	}
 	done := make(chan struct{})
 	go func() {
-		postOpen(t, server.URL, mustJSON(t, map[string]string{"path": slow}), http.StatusUnprocessableEntity, "syntax error")
+		postOpen(t, server.URL, transcripttest.MustJSON(t, map[string]string{"path": slow}), http.StatusUnprocessableEntity, "syntax error")
 		close(done)
 	}()
 	expectSignal(t, started, "the slow folder did not start to open")
-	postOpen(t, server.URL, mustJSON(t, map[string]string{"path": folder}), http.StatusConflict, "already opens another folder")
+	postOpen(t, server.URL, transcripttest.MustJSON(t, map[string]string{"path": folder}), http.StatusConflict, "already opens another folder")
 	close(release)
 	<-done
 
@@ -818,10 +815,10 @@ func TestOpenRootFollowsSessionsBeforeItReturns(t *testing.T) {
 	}
 	projects := filepath.Join(base, "projects")
 	root := filepath.Join(base, "repo")
-	writeFixture(t, root, "app.py", "def run():\n    return 1\n")
-	writeTranscript(t, filepath.Join(projects, encodeProjectPath(root), "s1.jsonl"), sessionStart(root))
+	langtest.WriteFixture(t, root, "app.py", "def run():\n    return 1\n")
+	transcripttest.WriteTranscript(t, filepath.Join(projects, transcript.EncodeProjectPath(root), "s1.jsonl"), transcripttest.SessionStart(root))
 	var workers sync.WaitGroup
-	view, err := openRoot(context.Background(), &workers, projects, root)
+	view, err := openRoot(context.Background(), &workers, pythonAnalyzer(t), projects, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -837,26 +834,26 @@ func TestOpenRootFollowsSessionsBeforeItReturns(t *testing.T) {
 	expectSignal(t, stopped, "the workers of a stopped view did not stop")
 }
 
-func TestRunServeStopsWorkersWhenListenFails(t *testing.T) {
+func TestRunStopsWorkersWhenListenFails(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	root := t.TempDir()
-	writeFixture(t, root, "app.py", "def run():\n    return 1\n")
+	langtest.WriteFixture(t, root, "app.py", "def run():\n    return 1\n")
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer listener.Close()
-	port := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
+	port := listener.Addr().(*net.TCPAddr).Port
 	result := make(chan error, 1)
-	go func() { result <- runServe([]string{root, "--port", port}) }()
+	go func() { result <- Run(pythonAnalyzer(t), root, port) }()
 	select {
 	case err := <-result:
 		if err == nil || !strings.Contains(err.Error(), "listen:") {
-			t.Fatalf("runServe = %v, want a listen error", err)
+			t.Fatalf("Run = %v, want a listen error", err)
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("runServe did not stop the workers of the folder after listen failed")
+		t.Fatal("Run did not stop the workers of the folder after listen failed")
 	}
 }
 
@@ -867,7 +864,7 @@ func TestResolveRootExpandsHome(t *testing.T) {
 	}
 	t.Setenv("HOME", home)
 	project := filepath.Join(home, "proj")
-	writeFixture(t, project, "a.py", "x = 1\n")
+	langtest.WriteFixture(t, project, "a.py", "x = 1\n")
 	tests := []struct {
 		path string
 		want string
@@ -888,7 +885,7 @@ func TestResolveRootExpandsHome(t *testing.T) {
 
 func TestRootViewPageEscapesTheRoot(t *testing.T) {
 	view := &rootView{root: "/tmp/a</script><img src=x onerror=alert(1)>/*__GRAPH__*/b", instance: "one"}
-	if _, err := view.setGraph(&Graph{Nodes: []Function{{ID: "n", Name: "f"}}}); err != nil {
+	if _, err := view.setGraph(&callgraph.Graph{Nodes: []callgraph.Function{{ID: "n", Name: "f"}}}); err != nil {
 		t.Fatal(err)
 	}
 	page, _ := view.content()
@@ -929,15 +926,15 @@ func postOpen(t *testing.T, url string, body string, status int, text string) {
 func TestWatchPublishesActivityAndSignalsSourceEdits(t *testing.T) {
 	projects := t.TempDir()
 	root := t.TempDir()
-	writeFixture(t, root, "app.py", "def run():\n    return 1\n")
-	writeFixture(t, root, "notes.md", "# Notes\n")
+	langtest.WriteFixture(t, root, "app.py", "def run():\n    return 1\n")
+	langtest.WriteFixture(t, root, "notes.md", "# Notes\n")
 	source := filepath.Join(root, "app.py")
 	notes := filepath.Join(root, "notes.md")
-	patch := []patchHunk{{OldStart: 1, OldLines: 1, NewStart: 1, NewLines: 2, Lines: []string{" def run():", "+    return 1"}}}
-	session := filepath.Join(projects, encodeProjectPath(root), "s1.jsonl")
-	writeTranscript(t, session,
-		sessionStart(root),
-		toolUseLine("e1", "Edit"), toolResultLine("e1", map[string]any{"filePath": notes, "structuredPatch": patch}),
+	patch := []transcript.Hunk{{OldStart: 1, OldLines: 1, NewStart: 1, NewLines: 2, Lines: []string{" def run():", "+    return 1"}}}
+	session := filepath.Join(projects, transcript.EncodeProjectPath(root), "s1.jsonl")
+	transcripttest.WriteTranscript(t, session,
+		transcripttest.SessionStart(root),
+		transcripttest.ToolUseLine("e1", "Edit"), transcripttest.ToolResultLine("e1", map[string]any{"filePath": notes, "structuredPatch": patch}),
 	)
 
 	live := &liveServer{view: &rootView{}}
@@ -945,7 +942,8 @@ func TestWatchPublishesActivityAndSignalsSourceEdits(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		live.view.watch(ctx, newTranscriptWatcher(projects, root), newActivityMapper(root), edits)
+		a := pythonAnalyzer(t)
+		live.view.watch(ctx, a, transcript.NewWatcher(projects, root), activity.NewMapper(root, a), edits)
 		close(done)
 	}()
 	t.Cleanup(func() {
@@ -958,7 +956,7 @@ func TestWatchPublishesActivityAndSignalsSourceEdits(t *testing.T) {
 	// The task notes of a poll come before its activity, and the gate follows
 	// the session.
 	all := live.view.hub.since(0)
-	var note taskNote
+	var note transcript.Note
 	if all[0].name != "task" || json.Unmarshal(all[0].data, &note) != nil || note.Kind != "request" || note.Text != "start" || note.Session != "s1" {
 		t.Fatalf("first event = %s %s, want the request note of s1", all[0].name, all[0].data)
 	}
@@ -972,7 +970,7 @@ func TestWatchPublishesActivityAndSignalsSourceEdits(t *testing.T) {
 	live.release()
 	live.setPaused(false)
 
-	appendTranscript(t, session, mustJSON(t, toolUseLine("r1", "Read"))+"\n"+mustJSON(t, toolResultLine("r1", readResult(source, 1, 2)))+"\n")
+	transcripttest.AppendTranscript(t, session, transcripttest.MustJSON(t, transcripttest.ToolUseLine("r1", "Read"))+"\n"+transcripttest.MustJSON(t, transcripttest.ToolResultLine("r1", transcripttest.ReadResult(source, 1, 2)))+"\n")
 	events = waitForEvents(t, live.view, "activity", 2)
 	assertActivityEvent(t, events[1], "read", "app.py", "run")
 	// The watcher handled the notes edit and the read without a source edit.
@@ -982,7 +980,7 @@ func TestWatchPublishesActivityAndSignalsSourceEdits(t *testing.T) {
 	default:
 	}
 
-	appendTranscript(t, session, mustJSON(t, toolUseLine("e2", "Edit"))+"\n"+mustJSON(t, toolResultLine("e2", map[string]any{"filePath": source, "structuredPatch": patch}))+"\n")
+	transcripttest.AppendTranscript(t, session, transcripttest.MustJSON(t, transcripttest.ToolUseLine("e2", "Edit"))+"\n"+transcripttest.MustJSON(t, transcripttest.ToolResultLine("e2", map[string]any{"filePath": source, "structuredPatch": patch}))+"\n")
 	events = waitForEvents(t, live.view, "activity", 3)
 	assertActivityEvent(t, events[2], "edit", "app.py", "run")
 	select {
@@ -992,10 +990,10 @@ func TestWatchPublishesActivityAndSignalsSourceEdits(t *testing.T) {
 	}
 
 	// The gate follows a session that starts after the first scan.
-	start := sessionStart(root)
+	start := transcripttest.SessionStart(root)
 	start["sessionId"] = "s2"
-	writeTranscript(t, filepath.Join(projects, encodeProjectPath(root), "s2.jsonl"),
-		start, toolUseLine("r2", "Read"), toolResultLine("r2", readResult(source, 1, 2)),
+	transcripttest.WriteTranscript(t, filepath.Join(projects, transcript.EncodeProjectPath(root), "s2.jsonl"),
+		start, transcripttest.ToolUseLine("r2", "Read"), transcripttest.ToolResultLine("r2", transcripttest.ReadResult(source, 1, 2)),
 	)
 	waitForEvents(t, live.view, "activity", 4)
 	live.setPaused(true)
@@ -1004,41 +1002,6 @@ func TestWatchPublishesActivityAndSignalsSourceEdits(t *testing.T) {
 	}
 	live.release()
 	live.setPaused(false)
-}
-
-func TestParseServeArguments(t *testing.T) {
-	tests := []struct {
-		name      string
-		arguments []string
-		root      string
-		port      int
-		err       string
-	}{
-		{name: "defaults", arguments: []string{"repo"}, root: "repo", port: defaultServePort},
-		{name: "options after root", arguments: []string{"repo", "--port", "9000", "--include-tests"}, root: "repo", port: 9000},
-		{name: "options before root", arguments: []string{"--port", "0", "repo"}, root: "repo", port: 0},
-		{name: "ignored option before root", arguments: []string{"--include-tests", "repo"}, root: "repo", port: defaultServePort},
-		{name: "no root", arguments: nil, root: "", port: defaultServePort},
-		{name: "help", arguments: []string{"--help"}, err: "usage: code-graph-visualizer serve [ROOT]"},
-		{name: "two roots", arguments: []string{"a", "b"}, err: "at most one ROOT"},
-		{name: "missing port", arguments: []string{"repo", "--port"}, err: "--port requires a number"},
-		{name: "invalid port", arguments: []string{"repo", "--port", "70000"}, err: `invalid port "70000"`},
-		{name: "unknown option", arguments: []string{"repo", "--output", "x"}, err: "unknown option --output"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			root, port, err := parseServeArguments(test.arguments)
-			if test.err != "" {
-				if err == nil || !strings.Contains(err.Error(), test.err) {
-					t.Fatalf("error = %v, want %q", err, test.err)
-				}
-				return
-			}
-			if err != nil || root != test.root || port != test.port {
-				t.Fatalf("parseServeArguments = %q, %d, %v", root, port, err)
-			}
-		})
-	}
 }
 
 // lockedBuffer collects log output from several goroutines.
@@ -1153,7 +1116,7 @@ func waitForEvents(t *testing.T, view *rootView, name string, count int) []hubEv
 
 func assertActivityEvent(t *testing.T, event hubEvent, kind string, file string, names ...string) {
 	t.Helper()
-	var activity Activity
+	var activity activity.Activity
 	if event.name != "activity" || json.Unmarshal(event.data, &activity) != nil {
 		t.Fatalf("event = %s %s, want an activity event", event.name, event.data)
 	}
@@ -1186,8 +1149,8 @@ func getBody(t *testing.T, url string, contentType string) string {
 func assertGraphPayload(t *testing.T, body string, version int, nodeID string) {
 	t.Helper()
 	var payload struct {
-		Version int   `json:"version"`
-		Graph   Graph `json:"graph"`
+		Version int             `json:"version"`
+		Graph   callgraph.Graph `json:"graph"`
 	}
 	if err := json.Unmarshal([]byte(body), &payload); err != nil {
 		t.Fatal(err)
@@ -1195,4 +1158,14 @@ func assertGraphPayload(t *testing.T, body string, version int, nodeID string) {
 	if payload.Version != version || len(payload.Graph.Nodes) != 1 || payload.Graph.Nodes[0].ID != nodeID {
 		t.Fatalf("graph payload = %s, want version %d with node %s", body, version, nodeID)
 	}
+}
+
+// pythonAnalyzer returns an analyzer for the Python fixtures.
+func pythonAnalyzer(t *testing.T) *analyzer.Analyzer {
+	t.Helper()
+	a := analyzer.New()
+	if err := a.Register(python.New()); err != nil {
+		t.Fatal(err)
+	}
+	return a
 }

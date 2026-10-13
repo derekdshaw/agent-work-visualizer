@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"cmp"
@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/derek-shaw/agent-work-visualizer/internal/transcript"
 )
 
 // recentSessionAge is the age of the newest session transcript of a folder
@@ -86,7 +88,7 @@ func sessionFolders(projects string, since time.Time) map[string]time.Time {
 		if err != nil {
 			continue
 		}
-		cwd := transcriptCwd(file)
+		cwd := transcript.Cwd(file)
 		file.Close()
 		if info, err := os.Stat(cwd); cwd == "" || err != nil || !info.IsDir() {
 			continue
@@ -126,7 +128,7 @@ func worktreeFolders(base string) []string {
 	// worktree can lie inside another worktree.
 	home := ""
 	for _, worktree := range worktrees {
-		if within(base, worktree) && len(worktree) > len(home) {
+		if transcript.Within(base, worktree) && len(worktree) > len(home) {
 			home = worktree
 		}
 	}

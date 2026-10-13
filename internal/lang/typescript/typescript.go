@@ -1,19 +1,68 @@
-package main
+package typescript
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
+	"github.com/derek-shaw/agent-work-visualizer/internal/callgraph"
+	"github.com/derek-shaw/agent-work-visualizer/internal/lang/langutil"
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 	tree_sitter_typescript "github.com/tree-sitter/tree-sitter-typescript/bindings/go"
 )
 
-type typescriptAnalysis struct {
-	files map[string]*typescriptFile
-	calls []typescriptCall
+// Language analyzes TypeScript sources. It holds no state, so one value can
+// analyze any number of trees.
+type Language struct{}
+
+func New() Language {
+	return Language{}
+}
+
+func (Language) Name() string {
+	return "typescript"
+}
+
+func (Language) Extensions() []string {
+	return []string{".ts", ".tsx", ".mts", ".cts"}
+}
+
+func (Language) SkipDirs() []string {
+	return []string{"node_modules", "dist", "out"}
+}
+
+func (Language) IsTestFile(relativePath string) bool {
+	name := filepath.Base(relativePath)
+	for _, extension := range []string{".ts", ".tsx", ".mts", ".cts"} {
+		if strings.HasSuffix(name, ".test"+extension) || strings.HasSuffix(name, ".spec"+extension) {
+			return true
+		}
+	}
+	return langutil.InDirectory(relativePath, "test", "tests")
+}
+
+func (Language) Analyze(root string, files []string) (*callgraph.Graph, error) {
+	a := &analysis{
+		root:      root,
+		nodesByID: make(map[string]*callgraph.Function),
+		files:     make(map[string]*typescriptFile),
+	}
+	if err := langutil.EachFile(root, files, a.analyzeTypescriptFile); err != nil {
+		return nil, err
+	}
+	a.resolveTypescriptCalls()
+	return &a.graph, nil
+}
+
+type analysis struct {
+	root      string
+	graph     callgraph.Graph
+	nodesByID map[string]*callgraph.Function
+	files     map[string]*typescriptFile
+	calls     []typescriptCall
 }
 
 type typescriptFile struct {
@@ -29,11 +78,7 @@ type typescriptCall struct {
 	constructor bool
 }
 
-func newTypescriptAnalysis() *typescriptAnalysis {
-	return &typescriptAnalysis{files: make(map[string]*typescriptFile)}
-}
-
-func (a *analyzer) analyzeTypescriptFile(path string) error {
+func (a *analysis) analyzeTypescriptFile(path string) error {
 	source, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
@@ -42,25 +87,12 @@ func (a *analyzer) analyzeTypescriptFile(path string) error {
 	if filepath.Ext(path) == ".tsx" {
 		language = tree_sitter_typescript.LanguageTSX()
 	}
-	parser := tree_sitter.NewParser()
-	defer parser.Close()
-	if err := parser.SetLanguage(tree_sitter.NewLanguage(language)); err != nil {
-		return fmt.Errorf("configure TypeScript parser: %w", err)
-	}
-	tree := parser.Parse(source, nil)
-	if tree == nil {
-		return fmt.Errorf("parse %s: parser returned no tree", path)
+	tree, err := langutil.Parse(path, source, tree_sitter.NewLanguage(language))
+	if err != nil {
+		return err
 	}
 	defer tree.Close()
 	root := tree.RootNode()
-	if bad := firstInvalidNode(root); bad != nil {
-		point := bad.StartPosition()
-		kind := "syntax error"
-		if bad.IsMissing() {
-			kind = "missing syntax"
-		}
-		return fmt.Errorf("%s:%d:%d: %s (%s)", path, point.Row+1, point.Column+1, kind, bad.Kind())
-	}
 	relative, err := filepath.Rel(a.root, path)
 	if err != nil {
 		return fmt.Errorf("relative path for %s: %w", path, err)
@@ -70,10 +102,9 @@ func (a *analyzer) analyzeTypescriptFile(path string) error {
 		module:  typescriptModuleName(relative),
 		imports: make(map[string]string),
 	}
-	a.typescript.files[relative] = state
-	a.graph.Files = append(a.graph.Files, GraphFile{Path: relative, Module: state.module, Language: "typescript"})
+	a.files[relative] = state
+	a.graph.Files = append(a.graph.Files, callgraph.File{Path: relative, Module: state.module, Language: "typescript"})
 	a.graph.Stats.Files++
-	a.graph.Stats.ProjectFiles++
 	a.walkTypescript(root, source, relative, state, "", "")
 	return nil
 }
@@ -87,7 +118,7 @@ func typescriptModuleName(relative string) string {
 	return strings.ReplaceAll(module, "/", ".")
 }
 
-func (a *analyzer) walkTypescript(
+func (a *analysis) walkTypescript(
 	node *tree_sitter.Node,
 	source []byte,
 	file string,
@@ -136,7 +167,7 @@ func (a *analyzer) walkTypescript(
 		function := node.ChildByFieldName("function")
 		if function != nil {
 			a.graph.Stats.Calls++
-			a.typescript.calls = append(a.typescript.calls, typescriptCall{
+			a.calls = append(a.calls, typescriptCall{
 				caller:     parentID,
 				expression: strings.TrimSpace(function.Utf8Text(source)),
 				file:       file,
@@ -147,7 +178,7 @@ func (a *analyzer) walkTypescript(
 		constructor := node.ChildByFieldName("constructor")
 		if constructor != nil {
 			a.graph.Stats.Calls++
-			a.typescript.calls = append(a.typescript.calls, typescriptCall{
+			a.calls = append(a.calls, typescriptCall{
 				caller:      parentID,
 				expression:  strings.TrimSpace(constructor.Utf8Text(source)),
 				file:        file,
@@ -161,7 +192,7 @@ func (a *analyzer) walkTypescript(
 	}
 }
 
-func (a *analyzer) collectTypescriptFunction(
+func (a *analysis) collectTypescriptFunction(
 	functionNode *tree_sitter.Node,
 	sourceNode *tree_sitter.Node,
 	source []byte,
@@ -194,9 +225,9 @@ func (a *analyzer) collectTypescriptFunction(
 			prefix = parent.QualifiedName
 		}
 	} else if class != "" {
-		prefix = qualified(state.module, class)
+		prefix = langutil.Qualified(state.module, class)
 	}
-	qualifiedName := qualified(prefix, name)
+	qualifiedName := langutil.Qualified(prefix, name)
 	point := sourceNode.StartPosition()
 	end := sourceNode.EndPosition()
 	signatureEnd := body.StartByte()
@@ -204,7 +235,7 @@ func (a *analyzer) collectTypescriptFunction(
 		signatureEnd = sourceNode.EndByte()
 	}
 	signature := strings.TrimSpace(string(source[sourceNode.StartByte():signatureEnd]))
-	function := Function{
+	function := callgraph.Function{
 		ID:            fmt.Sprintf("%s:%d:%s", file, point.Row+1, qualifiedName),
 		Name:          name,
 		QualifiedName: qualifiedName,
@@ -230,13 +261,12 @@ func (a *analyzer) collectTypescriptFunction(
 	if class != "" {
 		function.Kind = "method"
 	}
-	if exportDefault && !contains(function.Modifiers, "default") {
+	if exportDefault && !slices.Contains(function.Modifiers, "default") {
 		function.Modifiers = append(function.Modifiers, "default")
 	}
 	a.graph.Nodes = append(a.graph.Nodes, function)
 	a.nodesByID[function.ID] = &a.graph.Nodes[len(a.graph.Nodes)-1]
 	a.graph.Stats.Definitions++
-	a.graph.Stats.ProjectDefinitions++
 	for i := uint(0); i < body.NamedChildCount(); i++ {
 		a.walkTypescript(body.NamedChild(i), source, file, state, class, function.ID)
 	}
@@ -294,13 +324,13 @@ func collectTypescriptImport(text string, state *typescriptFile) {
 				if len(parts) == 3 && parts[1] == "as" {
 					alias = parts[2]
 				}
-				state.imports[alias] = qualified(module, parts[0])
+				state.imports[alias] = langutil.Qualified(module, parts[0])
 			}
 		}
 		clause = strings.TrimSpace(strings.TrimSuffix(clause[:open], ","))
 	}
 	if clause != "" {
-		state.imports[strings.TrimSpace(clause)] = qualified(module, "default")
+		state.imports[strings.TrimSpace(clause)] = langutil.Qualified(module, "default")
 	}
 }
 
@@ -315,8 +345,8 @@ func resolveTypescriptModule(current string, imported string) string {
 	return strings.ReplaceAll(resolved, "/", ".")
 }
 
-func (a *analyzer) resolveTypescriptCalls() {
-	byQualified := make(map[string]*Function)
+func (a *analysis) resolveTypescriptCalls() {
+	byQualified := make(map[string]*callgraph.Function)
 	for index := range a.graph.Nodes {
 		function := &a.graph.Nodes[index]
 		if function.Language == "typescript" {
@@ -324,13 +354,13 @@ func (a *analyzer) resolveTypescriptCalls() {
 			byQualified[function.QualifiedName] = function
 		}
 	}
-	edges := make(map[string]*Edge)
+	edges := make(map[string]*callgraph.Edge)
 	lineSets := make(map[string]map[uint]bool)
-	for _, call := range a.typescript.calls {
+	for _, call := range a.calls {
 		target := a.resolveTypescriptCall(call, byQualified)
 		if target == nil {
 			if call.caller != "" {
-				a.graph.Unresolved = append(a.graph.Unresolved, UnresolvedCall{
+				a.graph.Unresolved = append(a.graph.Unresolved, callgraph.UnresolvedCall{
 					Caller: call.caller, Expression: call.expression, File: call.file, Line: call.line,
 					Category: a.typescriptUnresolvedCategory(call), Language: "typescript",
 				})
@@ -342,7 +372,7 @@ func (a *analyzer) resolveTypescriptCalls() {
 		}
 		key := call.caller + "\x00" + target.ID + "\x00call"
 		if edges[key] == nil {
-			edges[key] = &Edge{Source: call.caller, Target: target.ID, Kind: "call"}
+			edges[key] = &callgraph.Edge{Source: call.caller, Target: target.ID, Kind: "call"}
 			lineSets[key] = make(map[uint]bool)
 		}
 		edges[key].Count++
@@ -359,20 +389,20 @@ func (a *analyzer) resolveTypescriptCalls() {
 	a.graph.Stats.Unresolved = len(a.graph.Unresolved)
 }
 
-func (a *analyzer) resolveTypescriptCall(call typescriptCall, byQualified map[string]*Function) *Function {
+func (a *analysis) resolveTypescriptCall(call typescriptCall, byQualified map[string]*callgraph.Function) *callgraph.Function {
 	caller := a.nodesByID[call.caller]
-	state := a.typescript.files[call.file]
+	state := a.files[call.file]
 	expression := strings.TrimSpace(call.expression)
 	expression = strings.ReplaceAll(expression, "?.", ".")
 	expression = strings.TrimSuffix(expression, "!")
 	if caller != nil && strings.HasPrefix(expression, "this.") && caller.Class != "" {
-		return byQualified[qualified(caller.Module, caller.Class, strings.TrimPrefix(expression, "this."))]
+		return byQualified[langutil.Qualified(caller.Module, caller.Class, strings.TrimPrefix(expression, "this."))]
 	}
 	if !strings.Contains(expression, ".") {
 		if caller != nil {
 			prefix := caller.QualifiedName
 			for {
-				if target := byQualified[qualified(prefix, expression)]; target != nil {
+				if target := byQualified[langutil.Qualified(prefix, expression)]; target != nil {
 					return target
 				}
 				index := strings.LastIndexByte(prefix, '.')
@@ -384,44 +414,44 @@ func (a *analyzer) resolveTypescriptCall(call typescriptCall, byQualified map[st
 		}
 		if imported := state.imports[expression]; imported != "" {
 			if call.constructor {
-				return byQualified[qualified(imported, "constructor")]
+				return byQualified[langutil.Qualified(imported, "constructor")]
 			}
 			if target := byQualified[imported]; target != nil {
 				return target
 			}
 			if strings.HasSuffix(imported, ".default") {
 				module := strings.TrimSuffix(imported, ".default")
-				for name, target := range byQualified {
-					if strings.HasPrefix(name, module+".") && contains(target.Modifiers, "default") {
+				for _, target := range byQualified {
+					if target.Module == module && slices.Contains(target.Modifiers, "default") {
 						return target
 					}
 				}
 			}
 		}
 		if call.constructor {
-			return byQualified[qualified(state.module, expression, "constructor")]
+			return byQualified[langutil.Qualified(state.module, expression, "constructor")]
 		}
-		return byQualified[qualified(state.module, expression)]
+		return byQualified[langutil.Qualified(state.module, expression)]
 	}
 	root, suffix, _ := strings.Cut(expression, ".")
 	if imported := state.imports[root]; imported != "" {
 		if call.constructor {
-			return byQualified[qualified(imported, suffix, "constructor")]
+			return byQualified[langutil.Qualified(imported, suffix, "constructor")]
 		}
-		return byQualified[qualified(imported, suffix)]
+		return byQualified[langutil.Qualified(imported, suffix)]
 	}
 	if call.constructor {
-		return byQualified[qualified(state.module, expression, "constructor")]
+		return byQualified[langutil.Qualified(state.module, expression, "constructor")]
 	}
-	if target := byQualified[qualified(state.module, expression)]; target != nil {
+	if target := byQualified[langutil.Qualified(state.module, expression)]; target != nil {
 		return target
 	}
 	return byQualified[expression]
 }
 
-func (a *analyzer) typescriptUnresolvedCategory(call typescriptCall) string {
+func (a *analysis) typescriptUnresolvedCategory(call typescriptCall) string {
 	root := strings.Split(call.expression, ".")[0]
-	if state := a.typescript.files[call.file]; state != nil && state.imports[root] != "" {
+	if state := a.files[call.file]; state != nil && state.imports[root] != "" {
 		return "external"
 	}
 	return "dynamic"

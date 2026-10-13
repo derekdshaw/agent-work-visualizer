@@ -1,4 +1,6 @@
-package main
+// Package transcript follows Claude Code session transcripts and turns their
+// Read, Edit, and Write results into tool events.
+package transcript
 
 import (
 	"bufio"
@@ -28,7 +30,7 @@ const (
 	maxProjectName = 200
 )
 
-// transcriptWatcher follows Claude Code session transcripts for sessions whose
+// Watcher follows Claude Code session transcripts for sessions whose
 // working directory contains root or lies inside it, and turns their Read,
 // Edit, and Write results into tool events for files under root.
 //
@@ -37,22 +39,22 @@ const (
 // The format is internal to Claude Code. The watcher is not safe for
 // concurrent use. described holds the subagent transcripts whose meta file
 // the watcher read.
-type transcriptWatcher struct {
+type Watcher struct {
 	projects  string
 	root      string
 	files     map[string]*transcriptFile
 	ignored   map[string]bool
 	tools     map[string]string
 	described map[string]bool
-	notes     []taskNote
+	notes     []Note
 	scanned   bool
 }
 
-// taskNote records what a session works on. Kind is "title" for the session
+// Note records what a session works on. Kind is "title" for the session
 // title, "request" for a user prompt, "step" for a tool call that an agent
 // starts, or "subagent" for the description of a subagent. Agent is "main" or
 // a subagent ID.
-type taskNote struct {
+type Note struct {
 	Time    time.Time `json:"time"`
 	Session string    `json:"session"`
 	Agent   string    `json:"agent"`
@@ -75,8 +77,8 @@ type transcriptCandidate struct {
 	inside   bool
 }
 
-func newTranscriptWatcher(projects string, root string) *transcriptWatcher {
-	return &transcriptWatcher{
+func NewWatcher(projects string, root string) *Watcher {
+	return &Watcher{
 		projects:  projects,
 		root:      root,
 		files:     make(map[string]*transcriptFile),
@@ -86,10 +88,10 @@ func newTranscriptWatcher(projects string, root string) *transcriptWatcher {
 	}
 }
 
-// claudeProjectsDir returns the directory that holds Claude Code session
+// ProjectsDir returns the directory that holds Claude Code session
 // transcripts: projects under CLAUDE_CONFIG_DIR, or under ~/.claude if
 // CLAUDE_CONFIG_DIR is empty.
-func claudeProjectsDir() (string, error) {
+func ProjectsDir() (string, error) {
 	config := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR"))
 	if config == "" {
 		home, err := os.UserHomeDir()
@@ -101,10 +103,10 @@ func claudeProjectsDir() (string, error) {
 	return filepath.Join(config, "projects"), nil
 }
 
-// encodeProjectPath returns the directory name Claude Code uses for a working
+// EncodeProjectPath returns the directory name Claude Code uses for a working
 // directory. A name longer than maxProjectName keeps its first maxProjectName
 // characters, then gets "-" and the base-36 absolute value of the path hash.
-func encodeProjectPath(path string) string {
+func EncodeProjectPath(path string) string {
 	name, hash := projectName(path)
 	if len(name) <= maxProjectName {
 		return name
@@ -130,17 +132,17 @@ func projectName(path string) (string, int64) {
 	return string(name), int64(hash)
 }
 
-// within reports whether path is base or lies under it.
-func within(path string, base string) bool {
+// Within reports whether path is base or lies under it.
+func Within(path string, base string) bool {
 	relative, err := filepath.Rel(base, path)
 	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 // projectDirs returns transcript directories for root, its ancestors, and
 // directories whose encoded name extends root's. The encoding is lossy, so the
-// prefix match can include unrelated directories. The scan method filters
+// prefix match can include unrelated directories. The Scan method filters
 // sessions by cwd.
-func (w *transcriptWatcher) projectDirs() []string {
+func (w *Watcher) projectDirs() []string {
 	var dirs []string
 	seen := make(map[string]bool)
 	add := func(name string) {
@@ -154,7 +156,7 @@ func (w *transcriptWatcher) projectDirs() []string {
 		}
 	}
 	for directory := w.root; ; directory = filepath.Dir(directory) {
-		add(encodeProjectPath(directory))
+		add(EncodeProjectPath(directory))
 		if directory == filepath.Dir(directory) {
 			break
 		}
@@ -175,11 +177,11 @@ func (w *transcriptWatcher) projectDirs() []string {
 	return dirs
 }
 
-// scan finds new session and subagent transcripts. On the first scan, it
+// Scan finds new session and subagent transcripts. On the first scan, it
 // replays the newest related session from its start and prefers sessions that
 // run inside root. It follows other existing transcripts from their current
 // end. It follows transcripts that appear later from their start.
-func (w *transcriptWatcher) scan() {
+func (w *Watcher) Scan() {
 	first := !w.scanned
 	w.scanned = true
 	var candidates []transcriptCandidate
@@ -254,7 +256,7 @@ func (w *transcriptWatcher) scan() {
 // beside a subagent transcript. It adds nothing if the file is missing, is not
 // valid JSON, or has no description. It returns false if it cannot read the
 // file or the file is not valid JSON, because Claude Code can still write it.
-func (w *transcriptWatcher) describeSubagent(session string, transcript string) bool {
+func (w *Watcher) describeSubagent(session string, transcript string) bool {
 	data, err := os.ReadFile(strings.TrimSuffix(transcript, ".jsonl") + ".meta.json")
 	if err != nil {
 		return false
@@ -269,13 +271,13 @@ func (w *transcriptWatcher) describeSubagent(session string, transcript string) 
 		return true
 	}
 	agent := strings.TrimPrefix(strings.TrimSuffix(filepath.Base(transcript), ".jsonl"), "agent-")
-	w.notes = append(w.notes, taskNote{Session: session, Agent: agent, Kind: "subagent", Text: noteText(meta.Description)})
+	w.notes = append(w.notes, Note{Session: session, Agent: agent, Kind: "subagent", Text: noteText(meta.Description)})
 	return true
 }
 
-// sessionIDs returns the IDs of the sessions whose main transcripts the
+// SessionIDs returns the IDs of the sessions whose main transcripts the
 // watcher follows.
-func (w *transcriptWatcher) sessionIDs() []string {
+func (w *Watcher) SessionIDs() []string {
 	var sessions []string
 	for path := range w.files {
 		if filepath.Base(filepath.Dir(path)) != "subagents" {
@@ -285,15 +287,15 @@ func (w *transcriptWatcher) sessionIDs() []string {
 	return sessions
 }
 
-// takeNotes returns the task notes from the scans and polls since the last
+// TakeNotes returns the task notes from the scans and polls since the last
 // call.
-func (w *transcriptWatcher) takeNotes() []taskNote {
+func (w *Watcher) TakeNotes() []Note {
 	notes := w.notes
 	w.notes = nil
 	return notes
 }
 
-func (w *transcriptWatcher) follow(path string, offset int64) {
+func (w *Watcher) follow(path string, offset int64) {
 	w.files[path] = &transcriptFile{offset: offset}
 	if offset == 0 {
 		log.Printf("Following transcript %s", path)
@@ -320,7 +322,7 @@ func newestCandidate(candidates []transcriptCandidate) string {
 // classify reads the start of a session transcript to find its working
 // directory. It returns known=false while the transcript has no cwd yet, and a
 // nil candidate when the session is unrelated to root.
-func (w *transcriptWatcher) classify(path string) (*transcriptCandidate, bool) {
+func (w *Watcher) classify(path string) (*transcriptCandidate, bool) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, false
@@ -330,20 +332,20 @@ func (w *transcriptWatcher) classify(path string) (*transcriptCandidate, bool) {
 	if err != nil {
 		return nil, false
 	}
-	cwd := transcriptCwd(file)
+	cwd := Cwd(file)
 	if cwd == "" {
 		// A transcript larger than the probe without a cwd is not a session log.
 		return nil, info.Size() >= cwdProbeBytes
 	}
-	if !within(cwd, w.root) && !within(w.root, cwd) {
+	if !Within(cwd, w.root) && !Within(w.root, cwd) {
 		return nil, true
 	}
-	return &transcriptCandidate{path: path, size: info.Size(), modified: info.ModTime(), inside: within(cwd, w.root)}, true
+	return &transcriptCandidate{path: path, size: info.Size(), modified: info.ModTime(), inside: Within(cwd, w.root)}, true
 }
 
-// transcriptCwd returns the first working directory that the first
+// Cwd returns the first working directory that the first
 // cwdProbeBytes bytes of a transcript record, or "" if they record none.
-func transcriptCwd(transcript io.Reader) string {
+func Cwd(transcript io.Reader) string {
 	reader := bufio.NewReader(io.LimitReader(transcript, cwdProbeBytes))
 	for {
 		data, err := reader.ReadBytes('\n')
@@ -359,16 +361,16 @@ func transcriptCwd(transcript io.Reader) string {
 	}
 }
 
-// poll reads lines appended since the last poll and returns their tool
+// Poll reads lines appended since the last poll and returns their tool
 // events. It keeps an incomplete trailing line until its newline arrives. It
 // stops following a transcript that no longer exists.
-func (w *transcriptWatcher) poll() []toolEvent {
+func (w *Watcher) Poll() []Event {
 	paths := make([]string, 0, len(w.files))
 	for path := range w.files {
 		paths = append(paths, path)
 	}
 	sort.Strings(paths)
-	var events []toolEvent
+	var events []Event
 	for _, path := range paths {
 		chunk, err := w.files[path].read(path)
 		if errors.Is(err, fs.ErrNotExist) {
@@ -448,10 +450,10 @@ type transcriptBlock struct {
 // toolResult holds the toolUseResult fields of Read, Edit, and Write. Failed
 // calls store a plain string there, which does not decode into this type.
 type toolResult struct {
-	Type            string      `json:"type"`
-	FilePath        string      `json:"filePath"`
-	Content         string      `json:"content"`
-	StructuredPatch []patchHunk `json:"structuredPatch"`
+	Type            string `json:"type"`
+	FilePath        string `json:"filePath"`
+	Content         string `json:"content"`
+	StructuredPatch []Hunk `json:"structuredPatch"`
 	File            struct {
 		FilePath  string `json:"filePath"`
 		StartLine int    `json:"startLine"`
@@ -461,7 +463,7 @@ type toolResult struct {
 
 // parseLine returns the tool events of one transcript line and adds its task
 // notes to w.notes.
-func (w *transcriptWatcher) parseLine(data []byte) []toolEvent {
+func (w *Watcher) parseLine(data []byte) []Event {
 	var line transcriptLine
 	if json.Unmarshal(data, &line) != nil {
 		return nil
@@ -471,7 +473,7 @@ func (w *transcriptWatcher) parseLine(data []byte) []toolEvent {
 		agent = "main"
 	}
 	note := func(kind string, text string) {
-		w.notes = append(w.notes, taskNote{Time: line.Timestamp, Session: line.SessionID, Agent: agent, Kind: kind, Text: noteText(text)})
+		w.notes = append(w.notes, Note{Time: line.Timestamp, Session: line.SessionID, Agent: agent, Kind: kind, Text: noteText(text)})
 	}
 	if line.Type == "ai-title" && line.AITitle != "" {
 		note("title", line.AITitle)
@@ -490,7 +492,7 @@ func (w *transcriptWatcher) parseLine(data []byte) []toolEvent {
 	if json.Unmarshal(line.Message.Content, &blocks) != nil {
 		return nil
 	}
-	var events []toolEvent
+	var events []Event
 	for _, block := range blocks {
 		switch {
 		case line.Type == "assistant" && block.Type == "tool_use":
@@ -505,7 +507,7 @@ func (w *transcriptWatcher) parseLine(data []byte) []toolEvent {
 				continue
 			}
 			event, ok := toolResultEvent(tool, line.ToolUseResult)
-			if !ok || !within(event.Path, w.root) {
+			if !ok || !Within(event.Path, w.root) {
 				continue
 			}
 			event.Time = line.Timestamp
@@ -558,7 +560,7 @@ func promptText(content json.RawMessage) string {
 
 // stepText describes a tool call: its description input if it has one, else
 // the tool name and the file or pattern that it works on.
-func (w *transcriptWatcher) stepText(block transcriptBlock) string {
+func (w *Watcher) stepText(block transcriptBlock) string {
 	var input struct {
 		Description string `json:"description"`
 		FilePath    string `json:"file_path"`
@@ -572,7 +574,7 @@ func (w *transcriptWatcher) stepText(block transcriptBlock) string {
 		return input.Description
 	case input.FilePath != "":
 		path := filepath.Clean(input.FilePath)
-		if relative, err := filepath.Rel(w.root, path); err == nil && within(path, w.root) {
+		if relative, err := filepath.Rel(w.root, path); err == nil && Within(path, w.root) {
 			return block.Name + " " + filepath.ToSlash(relative)
 		}
 		return block.Name + " " + filepath.Base(path)
@@ -591,16 +593,16 @@ func noteText(text string) string {
 	return string(runes[:maxNoteText-1]) + "…"
 }
 
-func toolResultEvent(tool string, data json.RawMessage) (toolEvent, bool) {
+func toolResultEvent(tool string, data json.RawMessage) (Event, bool) {
 	var result toolResult
 	if json.Unmarshal(data, &result) != nil {
-		return toolEvent{}, false
+		return Event{}, false
 	}
-	event := toolEvent{Tool: tool}
+	event := Event{Tool: tool}
 	switch {
 	case tool == "Read":
 		if result.Type != "text" || result.File.FilePath == "" {
-			return toolEvent{}, false
+			return Event{}, false
 		}
 		event.Path = result.File.FilePath
 		for line := result.File.StartLine; line < result.File.StartLine+result.File.NumLines; line++ {
@@ -615,10 +617,10 @@ func toolResultEvent(tool string, data json.RawMessage) (toolEvent, bool) {
 	default:
 		event.Path = result.FilePath
 		event.Hunks = result.StructuredPatch
-		event.Lines = changedLines(result.StructuredPatch)
+		event.Lines = ChangedLines(result.StructuredPatch)
 	}
 	if event.Path == "" {
-		return toolEvent{}, false
+		return Event{}, false
 	}
 	event.Path = filepath.Clean(event.Path)
 	return event, true

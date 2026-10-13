@@ -1,0 +1,4 @@
+/bin/
+/dist/
+/web/node_modules/
+*:Zone.Identifier

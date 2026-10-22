@@ -18,7 +18,8 @@ type Hunk struct {
 // Event is one successful Read, Edit, or Write call from a session
 // transcript. Line numbers refer to the file as it was when the call finished.
 // Only calls that changed existing content have Hunks, and then Lines is
-// ChangedLines(Hunks). Created is true for a Write that created the file.
+// ChangedLines(Hunks). Created is true for a Write that created the file, and
+// Content is then the file's content.
 type Event struct {
 	Time    time.Time
 	Session string
@@ -28,6 +29,7 @@ type Event struct {
 	Lines   []int
 	Hunks   []Hunk
 	Created bool
+	Content string
 }
 
 // ShiftLine maps a line number from before an edit to after it. A removed line

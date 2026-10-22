@@ -127,6 +127,33 @@ func TestRootChoices(t *testing.T) {
 			t.Fatalf("worktreeFolders through a symbolic link = %v, want %v", got, want)
 		}
 
+		// Recent agent work in another worktree is a mismatch, and work in the
+		// same worktree or an older session is not.
+		home, worktrees := worktreeRoots(inside)
+		if home != repo || len(worktrees) != 4 {
+			t.Fatalf("worktreeRoots = %q, %v, want %s and 4 worktrees", home, worktrees, repo)
+		}
+		if got := agentElsewhere(projects, home, worktrees, since); got != "" {
+			t.Fatalf("agentElsewhere with work in the same worktree = %q, want none", got)
+		}
+		elsewhere := filepath.Join(projects, "three-sub", "s1.jsonl")
+		transcripttest.WriteTranscript(t, elsewhere, transcripttest.SessionStart(filepath.Join(base, "three", "sub")))
+		if got := agentElsewhere(projects, home, worktrees, since); got != filepath.Join(base, "three", "sub") {
+			t.Fatalf("agentElsewhere = %q, want the folder in worktree three", got)
+		}
+		if got := agentElsewhere(projects, home, worktrees, now.Add(time.Hour)); got != "" {
+			t.Fatalf("agentElsewhere with only older sessions = %q, want none", got)
+		}
+		if got := agentElsewhere(projects, "", nil, since); got != "" {
+			t.Fatalf("agentElsewhere outside a repository = %q, want none", got)
+		}
+		if err := os.Remove(elsewhere); err != nil {
+			t.Fatal(err)
+		}
+		if gitBranch(repo) == "" || gitBranch(folder("not-a-repo")) != "" {
+			t.Fatalf("gitBranch = %q in the repository and %q outside", gitBranch(repo), gitBranch(folder("not-a-repo")))
+		}
+
 		// Without a current folder, the list starts at the directory where the
 		// server started.
 		t.Chdir(filepath.Join(link, "sub"))

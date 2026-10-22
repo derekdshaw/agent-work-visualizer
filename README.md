@@ -1,18 +1,20 @@
 # Agent Work Visualizer
 
-`agent-work-visualizer` is a local web server that shows the work of a Claude
-Code agent on the call graph of a Python, Go, Java, Rust, or TypeScript source
-tree while the agent runs. A tree may contain any combination of the supported
-languages. The server and its page need no language runtime, build tool,
-browser extension, or network access.
+`agent-work-visualizer` is a local web server that shows a Claude Code agent
+working on a code base in real time. The page draws the call graph of a
+Python, Go, Java, Rust, or TypeScript tree in 3D, locks a reticle onto the
+callable that the agent edits, lights its dependents hop by hop, and types the
+edit's diff into a code pane. Every session is recorded as a JSONL event log
+that replays with a scrubber. The server and the page need no network access.
 
 ## Build and run
 
-Go 1.24 or newer and a C compiler are required to build the Tree-sitter
-bindings.
+Building needs Go 1.24 or newer, a C compiler for the Tree-sitter bindings,
+and Node 22.18 or newer for the web build.
 
 ```sh
-go test ./...
+npm --prefix web ci
+npm --prefix web run build      # writes internal/server/web/dist, which go build embeds
 go build -o bin/agent-work-visualizer .
 bin/agent-work-visualizer /path/to/project
 ```
@@ -21,26 +23,141 @@ bin/agent-work-visualizer /path/to/project
 agent-work-visualizer [ROOT] [--port N]
 ```
 
-Open `http://127.0.0.1:7777` in a browser on the same computer. Options may
-appear before or after ROOT. See [Live agent view](#live-agent-view) for what
-the server follows and shows.
+Open `http://127.0.0.1:7777`. Options may appear before or after ROOT, and
+ROOT is optional: without it, the page starts with no graph and you open a
+working tree from the title bar. A binary built without the web build serves a
+page that explains the build steps.
 
 Virtual environments, caches, build outputs, and files with recognized
 generated-code markers are excluded from the graph. Tests are always included,
 because an agent reads and edits tests.
 
+## Develop
+
+Run the server and the Vite dev server side by side, then open
+`http://localhost:5173`. Vite forwards `/api`, `/events`, and `/gate` to the
+server on port 7777.
+
+```sh
+go run . /path/to/project
+npm --prefix web run dev
+```
+
+```sh
+go test ./...
+npm --prefix web test           # node --test: reducer, hops, layout, log parsing
+npm --prefix web run typecheck
+```
+
 ## Layout
 
 ```text
-main.go                          CLI: parse arguments, register languages, run the server
-internal/callgraph               graph model shared by every package
-internal/analyzer                file discovery, language routing, graph merge, single-file outlines
-internal/lang/<language>         one Tree-sitter analyzer per language (python, golang, java, rust, typescript)
-internal/lang/langutil           parsing and progress helpers shared by the analyzers
-internal/transcript              follows Claude Code session transcripts and parses tool results
-internal/activity                attributes tool events to the callables they read or changed
-internal/server                  HTTP routes, event stream, pause gate, folder picker, viewer page
+main.go                    CLI: parse arguments, register languages, run the server
+internal/callgraph         graph model shared by every package
+internal/analyzer          file discovery, language routing, graph merge, single-file outlines
+internal/lang/<language>   one Tree-sitter analyzer per language (python, golang, java, rust, typescript)
+internal/lang/langutil     parsing and progress helpers shared by the analyzers
+internal/transcript        follows Claude Code session transcripts and parses tool calls and results
+internal/activity          attributes tool events to the callables they read or changed
+internal/session           the JSONL session log: event schema, timeline, stored logs
+internal/server            HTTP routes, event stream, pause gate, working trees, embedded page
+web/src/session            event types and the pure fold(events, t) reducer
+web/src/graph              graph loading, hop distances, force layout (in a worker)
+web/src/view               three.js scene, camera, reticle
+web/src/ui                 stream, blast radius, code pane, scrubber, panes, working tree
 ```
+
+## The page
+
+- **Graph.** Each node is a callable, grouped into clusters by directory.
+  Drag to orbit, scroll or pinch to zoom, click a node for its details.
+  Auto-rotate pauses while you interact, and follow mode eases the camera
+  toward the active node. Glow is additive sprites with fog for depth.
+- **Reticle.** A read moves the reticle onto the callable that the agent read
+  (ACQUIRING). An edit makes it scan the target's busiest neighbors, then lock
+  on and shrink onto the target. Its color follows the phase: coral while
+  editing, cyan while a command runs, lime once it passes.
+- **Blast radius.** The edit target glows first, its direct callers and callees
+  half a second after the diff starts, and nodes two hops out a second later.
+  Edges light by the dimmer of their two ends, and pulses travel outward from
+  the target. Every callable edited earlier in the session keeps a faint trace.
+- **Agent stream.** One row per event: requests, the agent's plans, reads,
+  edits, tool calls, subagents, and commands with their result. Subagent rows
+  carry the subagent's ID.
+- **Code pane.** Tabs for the files edited so far, the full path of the current
+  file, and the edit's diff typed out line by line. The status bar shows the
+  latest command and the phase.
+- **Scrubber.** Coral bursts mark edits. Drag to any time; everything on the
+  page is computed from the events up to that time, so scrubbing and replay
+  need no other state. The speed button cycles 1×, 2×, 4×, 8×, and 16×
+  (Shift-click goes back down) and is remembered per browser. The previous and
+  next buttons jump to the start of an edit, so its lock-on and diff play from
+  the beginning. LIVE returns to the live edge.
+- **Session.** The title is Claude Code's session title. The picker replays an
+  earlier session log of the same working tree.
+- **Working tree.** Type or pick a path and select OPEN. The server indexes it
+  without a restart; on failure the page keeps the current graph and shows the
+  error. Recent paths, Claude Code session folders from the last 7 days, and the
+  same folder in each git worktree are offered. A chip appears when an agent
+  works in another worktree of the same repository.
+- **Panels.** Drag either divider, or focus it and use Left/Right (Shift for
+  larger steps); Home or a double click resets it. Widths persist. Below 980 px
+  the panels stack under the graph.
+- `prefers-reduced-motion` turns off auto-rotate, ripples, and the cursor blink.
+
+A transcript records a tool call only once it has finished, so the page cannot
+show the model's text while it is generated. The diff therefore types out the
+real edit text at a fixed rate, about 90 characters a second, after the reticle
+locks on.
+
+## Session logs
+
+The server writes one log per opened working tree to
+`$XDG_STATE_HOME/agent-work-visualizer/sessions/` (default
+`~/.local/state/agent-work-visualizer/sessions/`). The first line is a header,
+and each later line an event:
+
+```text
+{"t":0,"type":"session","root":"/repo","branch":"main","t0":"2026-10-13T21:00:00Z","gapCap":30}
+{"t":4.2,"at":"…","type":"read","agent":"main","path":"pkg/a.go","line":10,"nodeIds":["pkg/a.go\u0000pkg.Run"]}
+{"t":6.0,"at":"…","type":"edit","agent":"main","path":"pkg/a.go","nodeIds":["pkg/a.go\u0000pkg.Run"],"hunks":[…]}
+```
+
+Event types are `title`, `prompt`, `plan`, `step`, `agent`, `read`, `edit`,
+`check_start`, and `check_end`. Paths are relative to the root, and node IDs
+are the file and qualified name of a callable, which survive line shifts. `t`
+counts seconds on the session timeline; an idle gap counts at most `gapCap`
+seconds, so an agent that waits an hour for you, or a session replayed from
+yesterday, does not leave the timeline empty. The page streams the log over
+server-sent events with the line number as the event ID, so a reconnecting page
+resumes where it stopped. Each server start replays the newest session of the
+tree into a new log, so the picker can list near-duplicate logs.
+
+## Live agent view
+
+The server reads the session transcripts that Claude Code writes under
+`~/.claude/projects`. If you set `CLAUDE_CONFIG_DIR` for Claude Code, set the
+same value for the server. It then reads `$CLAUDE_CONFIG_DIR/projects`.
+
+The server follows sessions whose working directory is ROOT, a directory inside
+ROOT, or a parent of ROOT. At startup, it replays the newest session in ROOT or
+in a directory inside ROOT, together with its subagents. If no such session
+exists, it replays the newest session in a parent of ROOT. It follows sessions
+that start later from their first line. Reads and edits count only for files
+under ROOT.
+
+Each Read, Edit, or Write marks the callables that contain its lines. A Read
+marks the lines that the agent read, an Edit or Write the changed lines, and a
+Write that creates a file every line. The server moves line numbers forward
+through later edits of the same file, so an earlier read stays on the correct
+callable. Two seconds after the last edit to a supported source file, the server
+analyzes ROOT again and the page redraws the graph without moving the nodes it
+already placed. If the analysis fails, the page keeps the previous graph and
+shows the error.
+
+The server listens on the loopback interface only, because the session logs
+contain the source that the agent changed. It rejects a request whose Host
+header is not `127.0.0.1` or `localhost`, and a POST from another origin.
 
 ## Analysis model
 
@@ -113,143 +230,9 @@ Analysis is fail-closed. An unreadable file or a Tree-sitter `ERROR` or missing
 node stops the analysis with a path, line, and column. The server does not
 start, or keeps the previous graph, until every source file parses.
 
-## Viewer
-
-The page embeds graph data, Cytoscape.js 3.33.1, and 3d-force-graph 1.79.0.
-The 3D view progressively expands around entrypoints and selected callables.
-Search shows matching callables and their direct callers without expanding to
-higher callers. A keyboard-accessible result list shows each match's source
-location and direct-caller count; Up/Down and Enter select a result. The Modules
-view lists every analyzed source module and every disconnected callable graph
-component; selecting either opens its complete internal 3D graph. Selecting a
-callable opens a focused 2D caller/callee view whose depth can reach the farthest
-callable in its connected component. The
-context toolbar's back button returns through each prior node selection. The
-Labels toggle draws collision-managed compact callable names beside 3D nodes.
-In the Metaflow-steps filter, depth follows only forward step transitions and
-shows each included step's direct function dependencies without recursively
-expanding those dependencies. Its upper depth limit is the final reachable
-Metaflow step; other filters use the selected callable's connected component. The Unresolved tab
-groups call sites into collapsed language-runtime/built-in, external/imported
-API, and dynamic/unknown sections, with counts by expression and exact
-`file:line`.
-Ctrl-drag draws a rectangle and zooms to the enclosed nodes. Ctrl-click without
-dragging resets the camera; wheel and pinch zoom remain available.
-The circular help button at the toolbar's far-right edge opens a modal with
-navigation, depth, split-pane, source-view, and visual-key guidance.
-
-Node colors identify source directories. The expandable upper-left key lists
-colors for the directories currently visible and distinguishes ordinary calls,
-Metaflow transitions, and larger entrypoint nodes. Directory colors come from a
-fixed 25-color perceptually separated palette and are never reused;
-directories beyond the palette capacity in the active rendering use the key's
-neutral overflow color.
-
-Clicking a 3D node isolates it with its direct callers and callees. Isolation
-adds 3D and 2D tabs; the 2D tab fills the visualization area and roots its
-caller/callee layout at the selected node. Toolbar down/up arrows decrease or
-increase the shared connected-component depth in either tab. Both tabs use the dark
-theme. The key stays available and only shows node directories and relationship types
-present in the active rendering. The isolated 3D nodes are automatically fit
-to the resized viewport with 20 pixels of padding. Reset view exits isolation.
-The 2D hierarchy assigns levels by hop distance regardless of call direction;
-edge arrows still show caller-to-callee direction.
-The selected node is bright white and substantially larger in 3D, and has a
-bright outline in 2D.
-Selecting another node in either view makes it the isolation root and first
-call-stack row. The stack expands and contracts with the shared graph depth.
-
-Selecting a node also opens a right-side call-stack split pane, reducing the
-active graph viewport instead of covering it. A side-panel icon at the
-toolbar's far-right edge, directly above the pane, collapses or expands it.
-Dragging the pane's left divider resizes it; a focused divider also supports
-Left/Right arrow keys. The table follows outgoing calls to the selected graph
-depth and marks cycles. Its columns are Callable, Calls, and Location.
-Selecting a row shows the embedded source for that callable; the back arrow
-returns to the table. The pane is temporarily hidden in the Unresolved view and
-restored when returning to the graph.
-
-Renderer license notices are included in [LICENSE](LICENSE).
-
-## Live agent view
-
-The server shows the work of a Claude Code agent on the call graph while the
-agent runs. It reads the session transcripts that Claude Code writes
-under `~/.claude/projects`. If you set `CLAUDE_CONFIG_DIR` for Claude Code, set
-the same value for the server. It then reads `$CLAUDE_CONFIG_DIR/projects`.
-
-ROOT is the folder that the server follows. ROOT is optional. Without ROOT,
-the page opens the folder picker and shows no graph until you choose a folder.
-
-The graph always includes test files, because an agent reads and edits tests.
-If a test file does not parse, the server does not start. This also applies to
-Go `testdata` files.
-
-Open `http://127.0.0.1:7777` in a browser on the same computer. The server
-listens on the loopback interface only, because the page contains the source
-of every callable. It also rejects a request whose Host header is not
-`127.0.0.1` or `localhost`.
-
-The server follows sessions whose working directory is ROOT, a directory inside
-ROOT, or a parent of ROOT. At startup, it replays the newest session in ROOT or
-in a directory inside ROOT, together with its subagents. If no such session
-exists, it replays the newest session in a parent of ROOT. It follows sessions
-that start later from their first line.
-The page shows only Read, Edit, and Write calls on files under ROOT.
-
-Each call marks the callables that contain its lines. A Read marks the lines
-that the agent read. An Edit or Write marks the changed lines, and a Write that
-creates a file marks every line. The server moves line numbers forward through
-later edits of the same file, so an earlier read stays on the correct callable.
-
-The page has these live views:
-
-- The 3D view shows each callable that the agent touched, with up to 12 direct
-  callers and callees. Yellow is the latest step, orange is edited, blue is
-  read only, and gray is not touched.
-- A green trail joins the last 30 steps of each agent in the 3D view.
-- Layers shows one node for each source directory, colored by agent activity.
-  Select a directory to open its callables.
-- Activity lists every call, newest first, with the time, agent, tool,
-  callables, and `file:line`. Select a callable to center it with its direct
-  callers and callees in the 3D view.
-- The timeline steps back, plays, and steps forward through the agent steps.
-  The graph, the call stack, the changes, and the task panel show the state at
-  the selected step. Live returns to the latest step.
-- Follow adds the callables of the latest step to the graph. If no callable,
-  scope, or search is selected, the camera centers the latest step. It zooms
-  until the step and its nearby callers and callees fill about half of the
-  view.
-- The agent task panel shows the session title, the latest request, the latest
-  tool call, and the subagents that work at that time.
-- In the call stack, select an edited callable to show its changes in this
-  session as an inline diff above its current source.
-
-### Choose the folder
-
-The folder button at the right end of the second toolbar row shows the folder
-that the server follows. Select it to open the folder picker. The picker lists
-these folders:
-
-- The working directories of Claude Code sessions from the last 7 days, newest
-  first.
-- The same folder in each git worktree of the repository that contains the
-  current folder. If a worktree does not have that folder, the picker lists the
-  worktree. Without a current folder, the picker uses the directory where the
-  server started.
-
-You can also type a path. A path that starts with `~` starts in your home
-directory. The server analyzes the new folder before it changes to it. Then
-every open page reloads with the graph and history of the new folder. If the
-analysis fails, the server keeps the current folder and the picker shows the
-error. A pause stays in effect after the change, and the gate then holds only
-the sessions of the new folder. Resume agent also releases the tool calls that
-the gate holds for a previous folder.
-
 ### Pause the agent
 
-Pause agent holds the next tool call of each followed session until you select
-Resume agent. This needs a PreToolUse hook, which is a command that Claude Code
+Pause agent holds the next tool call of each followed session until you resume. This needs a PreToolUse hook, which is a command that Claude Code
 runs before each tool call. The hook sends the call to the `/gate` endpoint.
 Add this entry to the `hooks.PreToolUse` list in `~/.claude/settings.json`:
 
@@ -266,17 +249,18 @@ Add this entry to the `hooks.PreToolUse` list in `~/.claude/settings.json`:
 }
 ```
 
-If you use `--port`, change 7777 in the URL. The gate holds a call for at most
+Select PAUSE AGENT in the title bar to pause and RESUME AGENT to resume; the
+button shows how many calls the gate holds. If you use `--port`, change 7777 in
+the URL. The gate holds a call for at most
 50 minutes and then denies it. The curl `--max-time` value must be longer than
 this limit, and the hook `timeout` must be longer than `--max-time`. Every
 session runs the hook, but the gate holds only the sessions that the server
 follows. If the server does not run, curl fails and the call runs. A pause does
 not stop a tool call that already runs, or text that the agent writes.
 
-Two seconds after the last edit to a supported source file, the server analyzes
-ROOT again and the page loads the new graph. If the analysis fails, the page
-keeps the previous graph and shows the error. If the server restarts, an open
-page reloads itself.
+A pause stays in effect after you open another working tree, and the gate then
+holds only the sessions of the new tree. Resume also releases the calls that
+the gate holds for a previous tree.
 
 The server does not see changes that shell commands make, for example `sed -i`,
 formatters, code generation, or `git checkout`. Replayed calls from before such
@@ -288,7 +272,7 @@ Claude Code and can change between versions.
 The regression fixtures cover Python 3.12 generic type parameters, sync and
 async functions, methods, decorators, nested functions, lambdas,
 comprehensions, match statements, exception groups, import forms, Metaflow
-transitions, syntax rejection, deterministic ordering, and HTML escaping.
+transitions, syntax rejection, and deterministic ordering.
 Java fixtures cover packages, imports, overloads, constructors, inheritance,
 records, lambdas, entrypoints, exclusions, unresolved calls, mixed-language
 trees, and syntax rejection.

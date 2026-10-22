@@ -13,6 +13,7 @@ import (
 	"github.com/derek-shaw/agent-work-visualizer/internal/lang/rust"
 	"github.com/derek-shaw/agent-work-visualizer/internal/lang/typescript"
 	"github.com/derek-shaw/agent-work-visualizer/internal/server"
+	"github.com/derek-shaw/agent-work-visualizer/internal/session"
 )
 
 const defaultPort = 7777
@@ -37,7 +38,11 @@ func run(arguments []string) error {
 			return err
 		}
 	}
-	return server.Run(a, root, port)
+	sessions, err := session.DefaultDir()
+	if err != nil {
+		return err
+	}
+	return server.Run(server.Config{Analyzer: a, Root: root, Port: port, Sessions: sessions})
 }
 
 // parseArguments returns ROOT, or "" if the arguments name no ROOT, and the

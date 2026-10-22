@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Work</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+<div class="shell">
+<div class="frame">
+<span class="cn tl"></span><span class="cn tr"></span><span class="cn bl"></span><span class="cn br"></span>
+
+<header class="bar">
+  <div class="brand">
+    <svg width="26" height="26" viewBox="0 0 28 28" fill="none" stroke="#4FE3F5" stroke-width="1.5" aria-hidden="true"><path d="M14 2 L24.5 8 V20 L14 26 L3.5 20 V8 Z"/><circle cx="14" cy="14" r="3" fill="#4FE3F5"/><path d="M14 11 V2 M16.6 15.5 L24.5 20 M11.4 15.5 L3.5 20"/></svg>
+    <span>AGENT<i>/</i>WORK</span>
+  </div>
+  <div class="treebox">
+    <form class="tree" id="treeForm" autocomplete="off">
+      <label for="treeInput">WORKING TREE</label>
+      <input id="treeInput" list="treeList" spellcheck="false" placeholder="/path/to/checkout" aria-describedby="treeSt">
+      <datalist id="treeList"></datalist>
+      <button class="btn txt" type="submit">OPEN</button>
+      <span class="tstat" id="treeSt" role="status">CONNECTING…</span>
+    </form>
+    <div class="sess">
+      <label for="sessPick">SESSION /</label>
+      <select id="sessPick"><option value="">LIVE</option></select>
+      <b id="sessTitle">—</b><span id="sessBranch"></span>
+    </div>
+  </div>
+  <div class="barend">
+    <span class="sim" id="meta">NO GRAPH</span>
+    <span class="chip" id="mismatch" role="status" hidden></span>
+    <button class="btn txt" id="btnGate" type="button" aria-pressed="false">PAUSE AGENT</button>
+    <span class="rec" id="recWrap"><span></span><b id="rec">REC 00:00</b></span>
+  </div>
+</header>
+
+<div class="main" id="main">
+  <aside class="left" id="streamPane">
+    <div class="group">
+      <div class="lbl">Agent stream</div>
+      <div class="log" id="log" aria-live="off"></div>
+    </div>
+    <div class="group">
+      <div class="lbl">Blast radius</div>
+      <div class="blast" id="blast"></div>
+    </div>
+  </aside>
+
+  <div class="split" id="splitL" role="separator" aria-orientation="vertical" aria-label="Resize agent stream panel" tabindex="0"></div>
+
+  <section class="stage" id="stage">
+    <canvas id="gl" role="img" aria-label="Interactive 3D call graph of the working tree. Drag to orbit, scroll to zoom, click a node to inspect it. A coral target marks the callable the agent is editing."></canvas>
+    <div class="vig"></div>
+    <div class="hud tl"><b>VIEWPORT · ORBIT</b><span id="cam">AZ 0° EL 0°</span></div>
+    <div class="hud tr" id="focus" hidden></div>
+    <div class="card" id="card" hidden>
+      <div><b id="cardName"></b><span id="cardInfo"></span></div>
+      <button class="cardx" id="cardX" type="button" aria-label="Close node details">×</button>
+    </div>
+    <div class="hud bl">
+      <span><i class="dot" style="background:var(--cyan)"></i>STABLE</span>
+      <span><i class="dot" style="background:var(--coral)"></i>EDITING</span>
+      <span>DRAG · SCROLL · CLICK</span>
+    </div>
+    <div class="tools">
+      <button class="btn" id="btnRot" type="button" aria-pressed="true" aria-label="Auto-rotate">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><ellipse cx="10" cy="10" rx="8" ry="3.5"/><circle cx="10" cy="10" r="2" fill="currentColor"/></svg>
+      </button>
+      <button class="btn" id="btnReset" type="button" aria-label="Reset view">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M10 2 V18 M2 10 H18 M10 2 L7.5 4.5 M10 2 L12.5 4.5 M10 18 L7.5 15.5 M10 18 L12.5 15.5 M2 10 L4.5 7.5 M2 10 L4.5 12.5 M18 10 L15.5 7.5 M18 10 L15.5 12.5"/></svg>
+      </button>
+      <button class="btn" id="btnFollow" type="button" aria-pressed="true" aria-label="Follow edit">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="6"/><circle cx="10" cy="10" r="1.5" fill="currentColor"/><path d="M10 1 V4 M10 16 V19 M1 10 H4 M16 10 H19"/></svg>
+      </button>
+    </div>
+    <div class="lock" id="lock" hidden><span class="st" id="lockSt">ACQUIRING</span><span id="lockName"></span></div>
+    <div class="tip" id="tip" hidden></div>
+    <div class="empty" id="empty" hidden></div>
+  </section>
+
+  <div class="split" id="splitR" role="separator" aria-orientation="vertical" aria-label="Resize code panel" tabindex="0"></div>
+
+  <aside class="right">
+    <div class="tabs" id="tabs" role="tablist" aria-label="Files edited in this session"></div>
+    <div class="pathbar" title="File being edited"><span id="pathRoot"></span><span id="pathFile"></span></div>
+    <div class="code" id="code" aria-label="Streaming diff"></div>
+    <div class="status">
+      <span id="chk"></span>
+      <span class="live" id="liveSt"><i class="dot" style="background:var(--mute)"></i><span>IDLE</span></span>
+    </div>
+  </aside>
+</div>
+
+<footer class="scrub">
+  <button class="btn" id="btnPlay" type="button" aria-label="Pause session">
+    <svg id="icoPause" width="18" height="18" viewBox="0 0 18 18" fill="currentColor" aria-hidden="true"><rect x="3" y="2" width="4" height="14"/><rect x="11" y="2" width="4" height="14"/></svg>
+    <svg id="icoPlay" width="18" height="18" viewBox="0 0 18 18" fill="currentColor" aria-hidden="true" hidden><path d="M4 2 L15 9 L4 16 Z"/></svg>
+  </button>
+  <div class="transport">
+    <button class="btn" id="btnPrev" type="button" aria-label="Previous edit" title="Previous edit">
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor" aria-hidden="true"><rect x="3" y="3" width="2" height="12"/><path d="M15 3 L6 9 L15 15 Z"/></svg>
+    </button>
+    <button class="btn" id="btnNext" type="button" aria-label="Next edit" title="Next edit">
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor" aria-hidden="true"><rect x="13" y="3" width="2" height="12"/><path d="M3 3 L12 9 L3 15 Z"/></svg>
+    </button>
+    <button class="btn txt speed" id="btnSpeed" type="button" title="Playback speed. Shift-click to slow down.">1×</button>
+  </div>
+  <span class="time" id="time">00:00 / 00:00</span>
+  <div class="track" id="track">
+    <div class="ticks"></div>
+    <input id="seek" type="range" min="0" max="1" step="any" value="0" aria-label="Session position">
+  </div>
+  <button class="btn txt" id="btnLive" type="button" aria-pressed="true">LIVE</button>
+  <span class="hint">DRAG TO SCRUB</span>
+</footer>
+</div>
+</div>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

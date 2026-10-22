@@ -96,7 +96,7 @@ func TestTranscriptWatcherParsesToolResults(t *testing.T) {
 	want := []Event{
 		{Time: transcripttest.Time, Session: "s1", Agent: "main", Tool: "Read", Path: source, Lines: []int{3, 4}},
 		{Time: transcripttest.Time, Session: "s1", Agent: "main", Tool: "Edit", Path: source, Lines: []int{2}, Hunks: patch},
-		{Time: transcripttest.Time, Session: "s1", Agent: "main", Tool: "Write", Path: created, Lines: []int{1, 2}, Created: true},
+		{Time: transcripttest.Time, Session: "s1", Agent: "main", Tool: "Write", Path: created, Lines: []int{1, 2}, Created: true, Content: "a\nb"},
 		{Time: transcripttest.Time, Session: "s1", Agent: "main", Tool: "Write", Path: created, Lines: []int{2}, Hunks: patch},
 		{Time: transcripttest.Time, Session: "s1", Agent: "abc", Tool: "Read", Path: source, Lines: []int{1}},
 	}
@@ -142,6 +142,7 @@ func TestTranscriptWatcherRecordsTaskNotes(t *testing.T) {
 		transcripttest.SessionStart(root),
 		map[string]any{"type": "ai-title", "sessionId": "s1", "aiTitle": "Fix the parser"},
 		map[string]any{"type": "ai-title", "sessionId": "s1", "aiTitle": ""},
+		map[string]any{"type": "ai-title", "sessionId": "s1", "aiTitle": "Fix the parser"},
 		userLine([]any{map[string]any{"type": "text", "text": "  first part"}, map[string]any{"type": "image"}, map[string]any{"type": "text", "text": "second part"}}, nil),
 		userLine("system reminder", map[string]any{"isMeta": true}),
 		userLine("summary of earlier work", map[string]any{"isCompactSummary": true}),
@@ -153,11 +154,15 @@ func TestTranscriptWatcherRecordsTaskNotes(t *testing.T) {
 		userLine(`<pasted_content id="p2">only pasted text</pasted_content>`, nil),
 		userLine([]any{map[string]any{"type": "tool_result", "tool_use_id": "b0"}, map[string]any{"type": "text", "text": "after the result"}}, nil),
 		toolUse("b1", "Bash", map[string]any{"command": "go test ./...", "description": "Run the tests"}),
-		// Assistant text is not a request.
+		// Assistant text is a plan, not a request.
 		map[string]any{"type": "assistant", "sessionId": "s1", "timestamp": transcripttest.Time, "message": map[string]any{"content": []any{
 			map[string]any{"type": "text", "text": "I will build it."},
+			map[string]any{"type": "text", "text": "  "},
 			map[string]any{"type": "tool_use", "id": "b2", "name": "Bash", "input": map[string]any{"description": "Build"}},
 		}}},
+		transcripttest.ToolResultLine("b1", map[string]any{"stdout": "ok"}),
+		transcripttest.WithField(transcripttest.ToolResultLine("b2", "Exit code 1"), "is_error", true),
+		toolUse("b3", "Bash", map[string]any{"command": "  go vet ./...\necho done"}),
 		toolUse("r1", "Read", map[string]any{"file_path": filepath.Join(root, "pkg", "a.go")}),
 		toolUse("r2", "Read", map[string]any{"file_path": "/elsewhere/notes.md"}),
 		toolUse("g1", "Grep", map[string]any{"pattern": "func main"}),
@@ -196,14 +201,16 @@ func TestTranscriptWatcherRecordsTaskNotes(t *testing.T) {
 		note("main", "request", strings.Repeat("a", maxNoteText)),
 		note("main", "request", "fix this"),
 		note("main", "request", "[pasted content]"),
-		note("main", "step", "Run the tests"),
-		note("main", "step", "Build"),
-		note("main", "step", "Read pkg/a.go"),
-		note("main", "step", "Read notes.md"),
+		note("main", "check_start", "Run the tests"),
+		note("main", "plan", "I will build it."),
+		note("main", "check_start", "Build"),
+		{Time: transcripttest.Time, Session: "s1", Agent: "main", Kind: "check_end", OK: true},
+		{Time: transcripttest.Time, Session: "s1", Agent: "main", Kind: "check_end"},
+		note("main", "check_start", "go vet ./..."),
 		note("main", "step", "Grep func main"),
 		note("main", "step", "TaskList"),
 		note("main", "step", "NoInput"),
-		note("abc", "step", "List files"),
+		note("abc", "check_start", "List files"),
 	}
 	if got := watcher.TakeNotes(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("notes =\n%+v\nwant\n%+v", got, want)

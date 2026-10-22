@@ -23,15 +23,10 @@ SOFTWARE.
 Third-party notices
 ===================
 
-Cytoscape.js 3.33.1
-Copyright (c) 2016-2025, The Cytoscape Consortium
+three.js 0.186.1
+Copyright (c) 2010-2026 three.js authors
 Licensed under the MIT License.
-https://github.com/cytoscape/cytoscape.js
-
-3d-force-graph 1.79.0
-Copyright (c) 2017 Vasco Asturiano
-Licensed under the MIT License.
-https://github.com/vasturiano/3d-force-graph
+https://github.com/mrdoob/three.js
 
 Tree-sitter Go bindings 0.25.0
 Copyright (c) 2024 Tree-sitter contributors

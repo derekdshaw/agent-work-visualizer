@@ -105,33 +105,10 @@ func sessionFolders(projects string, since time.Time) map[string]time.Time {
 // base, or the worktree itself if that folder does not exist. It returns nil
 // if base is not in a git worktree or git does not answer in 5 seconds.
 func worktreeFolders(base string) []string {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	output, err := exec.CommandContext(ctx, "git", "-C", base, "worktree", "list", "--porcelain").Output()
-	if err != nil {
-		return nil
-	}
-	// git can give paths with or without symbolic links, so the comparison
-	// uses paths without them.
 	if real, err := filepath.EvalSymlinks(base); err == nil {
 		base = real
 	}
-	var worktrees []string
-	for _, line := range strings.Split(string(output), "\n") {
-		if path, ok := strings.CutPrefix(line, "worktree "); ok {
-			if real, err := filepath.EvalSymlinks(path); err == nil {
-				worktrees = append(worktrees, real)
-			}
-		}
-	}
-	// base lies in the longest worktree path that contains it, because a
-	// worktree can lie inside another worktree.
-	home := ""
-	for _, worktree := range worktrees {
-		if transcript.Within(base, worktree) && len(worktree) > len(home) {
-			home = worktree
-		}
-	}
+	home, worktrees := worktreeRoots(base)
 	if home == "" {
 		return nil
 	}
@@ -149,4 +126,73 @@ func worktreeFolders(base string) []string {
 	}
 	slices.Sort(folders)
 	return slices.Compact(folders)
+}
+
+// worktreeRoots returns the git worktree that contains base and every
+// worktree of its repository, without symbolic links. home is "" if base is
+// not in a git worktree or git does not answer in 5 seconds.
+func worktreeRoots(base string) (home string, worktrees []string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, "git", "-C", base, "worktree", "list", "--porcelain").Output()
+	if err != nil {
+		return "", nil
+	}
+	// git can give paths with or without symbolic links, so the comparison
+	// uses paths without them.
+	for _, line := range strings.Split(string(output), "\n") {
+		if path, ok := strings.CutPrefix(line, "worktree "); ok {
+			if real, err := filepath.EvalSymlinks(path); err == nil {
+				worktrees = append(worktrees, real)
+			}
+		}
+	}
+	home = owningWorktree(base, worktrees)
+	if home == "" {
+		return "", nil
+	}
+	return home, worktrees
+}
+
+// owningWorktree returns the longest worktree that contains path, because a
+// worktree can lie inside another worktree, or "" if none does.
+func owningWorktree(path string, worktrees []string) string {
+	owner := ""
+	for _, worktree := range worktrees {
+		if transcript.Within(path, worktree) && len(worktree) > len(owner) {
+			owner = worktree
+		}
+	}
+	return owner
+}
+
+// agentElsewhere returns the working directory of the newest session that
+// changed after since and runs in a worktree other than home, or "" if there
+// is none. home and worktrees come from worktreeRoots.
+func agentElsewhere(projects string, home string, worktrees []string, since time.Time) string {
+	if home == "" {
+		return ""
+	}
+	newest, newestTime := "", time.Time{}
+	for folder, changed := range sessionFolders(projects, since) {
+		if real, err := filepath.EvalSymlinks(folder); err == nil {
+			folder = real
+		}
+		if owner := owningWorktree(folder, worktrees); owner != "" && owner != home && changed.After(newestTime) {
+			newest, newestTime = folder, changed
+		}
+	}
+	return newest
+}
+
+// gitBranch returns the current branch of the repository that contains root,
+// or "" if git does not name one in 5 seconds.
+func gitBranch(root string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, "git", "-C", root, "rev-parse", "--abbrev-ref", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
 }

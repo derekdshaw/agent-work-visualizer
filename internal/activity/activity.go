@@ -15,7 +15,7 @@ import (
 
 // Activity is a tool event attributed to the callables it touched. An empty
 // Functions list means the event applies to the file only. Hunks is the
-// structuredPatch of an edit.
+// structuredPatch of an edit. Content is the content of a created file.
 type Activity struct {
 	Time      time.Time         `json:"time"`
 	Session   string            `json:"session"`
@@ -27,6 +27,7 @@ type Activity struct {
 	Functions []Callable        `json:"functions"`
 	Hunks     []transcript.Hunk `json:"hunks,omitempty"`
 	Created   bool              `json:"created,omitempty"`
+	Content   string            `json:"content,omitempty"`
 	Note      string            `json:"note,omitempty"`
 }
 
@@ -138,6 +139,7 @@ func (m *Mapper) attribute(event transcript.Event, lines []int) Activity {
 		Functions: []Callable{},
 		Hunks:     event.Hunks,
 		Created:   event.Created,
+		Content:   event.Content,
 	}
 	if event.Tool == "Read" {
 		activity.Kind = "read"

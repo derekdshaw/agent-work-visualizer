@@ -38,7 +38,7 @@ const (
 // subagents write projects/<encoded cwd>/<session>/subagents/agent-<id>.jsonl.
 // The format is internal to Claude Code. The watcher is not safe for
 // concurrent use. described holds the subagent transcripts whose meta file
-// the watcher read.
+// the watcher read, and titles the latest title of each session.
 type Watcher struct {
 	projects  string
 	root      string
@@ -46,20 +46,24 @@ type Watcher struct {
 	ignored   map[string]bool
 	tools     map[string]string
 	described map[string]bool
+	titles    map[string]string
 	notes     []Note
 	scanned   bool
 }
 
 // Note records what a session works on. Kind is "title" for the session
-// title, "request" for a user prompt, "step" for a tool call that an agent
-// starts, or "subagent" for the description of a subagent. Agent is "main" or
-// a subagent ID.
+// title, "request" for a user prompt, "plan" for text that an agent writes,
+// "step" for a tool call other than Read, Edit, Write, and Bash, "subagent"
+// for the description of a subagent, "check_start" for a Bash call that an
+// agent starts, or "check_end" for its result, with OK false if it failed.
+// Agent is "main" or a subagent ID.
 type Note struct {
 	Time    time.Time `json:"time"`
 	Session string    `json:"session"`
 	Agent   string    `json:"agent"`
 	Kind    string    `json:"kind"`
 	Text    string    `json:"text"`
+	OK      bool      `json:"ok,omitempty"`
 }
 
 // maxNoteText is the maximum number of characters in a task note.
@@ -85,6 +89,7 @@ func NewWatcher(projects string, root string) *Watcher {
 		ignored:   make(map[string]bool),
 		tools:     make(map[string]string),
 		described: make(map[string]bool),
+		titles:    make(map[string]string),
 	}
 }
 
@@ -475,8 +480,13 @@ func (w *Watcher) parseLine(data []byte) []Event {
 	note := func(kind string, text string) {
 		w.notes = append(w.notes, Note{Time: line.Timestamp, Session: line.SessionID, Agent: agent, Kind: kind, Text: noteText(text)})
 	}
-	if line.Type == "ai-title" && line.AITitle != "" {
+	// Claude Code writes the title line again after later turns.
+	if line.Type == "ai-title" && line.AITitle != "" && w.titles[line.SessionID] != line.AITitle {
+		w.titles[line.SessionID] = line.AITitle
 		note("title", line.AITitle)
+		return nil
+	}
+	if line.Type == "ai-title" {
 		return nil
 	}
 	// The first user line of a subagent is its prompt, not a user request.
@@ -495,14 +505,28 @@ func (w *Watcher) parseLine(data []byte) []Event {
 	var events []Event
 	for _, block := range blocks {
 		switch {
-		case line.Type == "assistant" && block.Type == "tool_use":
-			if block.Name == "Read" || block.Name == "Edit" || block.Name == "Write" {
-				w.tools[block.ID] = block.Name
+		case line.Type == "assistant" && block.Type == "text":
+			if text := strings.TrimSpace(block.Text); text != "" {
+				note("plan", text)
 			}
-			note("step", w.stepText(block))
+		case line.Type == "assistant" && block.Type == "tool_use":
+			switch block.Name {
+			// Their results become events, which name the file and callables.
+			case "Read", "Edit", "Write":
+				w.tools[block.ID] = block.Name
+			case "Bash":
+				w.tools[block.ID] = block.Name
+				note("check_start", commandText(block))
+			default:
+				note("step", w.stepText(block))
+			}
 		case line.Type == "user" && block.Type == "tool_result":
 			tool, ok := w.tools[block.ToolUseID]
 			delete(w.tools, block.ToolUseID)
+			if ok && tool == "Bash" {
+				w.notes = append(w.notes, Note{Time: line.Timestamp, Session: line.SessionID, Agent: agent, Kind: "check_end", OK: !block.IsError})
+				continue
+			}
 			if !ok || block.IsError {
 				continue
 			}
@@ -584,6 +608,26 @@ func (w *Watcher) stepText(block transcriptBlock) string {
 	return block.Name
 }
 
+// commandText describes a Bash call: its description input if it has one,
+// else the first line of its command.
+func commandText(block transcriptBlock) string {
+	var input struct {
+		Description string `json:"description"`
+		Command     string `json:"command"`
+	}
+	if json.Unmarshal(block.Input, &input) != nil {
+		return block.Name
+	}
+	if input.Description != "" {
+		return input.Description
+	}
+	command, _, _ := strings.Cut(strings.TrimSpace(input.Command), "\n")
+	if command == "" {
+		return block.Name
+	}
+	return command
+}
+
 // noteText shortens text to maxNoteText characters.
 func noteText(text string) string {
 	runes := []rune(text)
@@ -611,6 +655,7 @@ func toolResultEvent(tool string, data json.RawMessage) (Event, bool) {
 	case tool == "Write" && result.Type == "create":
 		event.Path = result.FilePath
 		event.Created = true
+		event.Content = result.Content
 		for line := 1; line <= lineCount(result.Content); line++ {
 			event.Lines = append(event.Lines, line)
 		}

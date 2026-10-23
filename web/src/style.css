@@ -1,3 +1,4 @@
+@import "./settings/colors.css";
 /* Layout from notes/prototype.html: agent stream left, orbitable 3D graph
    center, live diff right, session scrubber along the bottom. One dark look. */
 :root{

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { LayoutResult } from '../graph/layout.ts';
 import type { Graph } from '../graph/load.ts';
 import { mulberry32 } from '../graph/layout.ts';
+import { packageColors, readPalette } from '../settings/palette.ts';
 import { Orbit } from './camera.ts';
 import { makeReticle, type Reticle, tintReticle } from './reticle.ts';
 
@@ -39,6 +40,10 @@ export interface Groups {
 }
 
 const RING_SEGMENTS = 48;
+// A node glows toward these while it is hot; its package color is the cold end.
+const HOT_HALO = new THREE.Color().setRGB(1, 0.35, 0.49);
+const HOT_CORE = new THREE.Color().setRGB(1, 0.88, 0.91);
+const WHITE = new THREE.Color(1, 1, 1);
 
 interface NodeSprites {
   halo: THREE.Sprite;
@@ -105,6 +110,9 @@ export class GraphScene {
   private readonly fog = new THREE.FogExp2(0x04060b, 0.011);
   private graphGroup = new THREE.Group();
   private nodes: NodeSprites[] = [];
+  // The package color of each node, and its lighter core.
+  private haloBase: THREE.Color[] = [];
+  private coreBase: THREE.Color[] = [];
   private vectors: THREE.Vector3[] = [];
   private sizes: number[] = [];
   private edges: Array<[number, number]> = [];
@@ -221,7 +229,10 @@ export class GraphScene {
     starGeometry.setAttribute('position', new THREE.BufferAttribute(stars, 3));
     group.add(new THREE.Points(starGeometry, new THREE.PointsMaterial({ color: 0x4fe3f5, size: 0.35 * spread, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false, fog: false })));
 
-    this.groups = this.drawGroups(graph, group);
+    const colors = packageColors(graph.modules, readPalette());
+    this.haloBase = graph.modOf.map((m) => colors[m]);
+    this.coreBase = this.haloBase.map((color) => color.clone().lerp(WHITE, 0.3));
+    this.groups = this.drawGroups(graph, group, colors);
 
     const edgePositions = new Float32Array(this.edges.length * 6);
     this.edges.forEach(([a, b], k) => {
@@ -249,7 +260,7 @@ export class GraphScene {
 
   // drawGroups rings each module's cluster just below it. Module centers sit on
   // a sphere, so rings on the shared floor would overlap.
-  private drawGroups(graph: Graph, group: THREE.Group): Groups {
+  private drawGroups(graph: Graph, group: THREE.Group, colors: THREE.Color[]): Groups {
     const modules = graph.modules.map(() => ({ x: 0, z: 0, y: 0, r: 0, count: 0 }));
     const files = graph.files.map(() => new THREE.Vector3());
     const fileCount = new Array<number>(graph.files.length).fill(0);
@@ -283,17 +294,21 @@ export class GraphScene {
       m.y = h[Math.floor(0.2 * (h.length - 1))];
     });
     const rings = new Float32Array(modules.length * RING_SEGMENTS * 6);
+    const ringColors = new Float32Array(rings.length);
     modules.forEach((m, k) => {
       const r = Math.max(1.5, m.r + 1);
       for (let s = 0; s < RING_SEGMENTS; s++) {
         const a0 = (s / RING_SEGMENTS) * Math.PI * 2;
         const a1 = ((s + 1) / RING_SEGMENTS) * Math.PI * 2;
         rings.set([m.x + r * Math.cos(a0), m.y - 1, m.z + r * Math.sin(a0), m.x + r * Math.cos(a1), m.y - 1, m.z + r * Math.sin(a1)], (k * RING_SEGMENTS + s) * 6);
+        colors[k].toArray(ringColors, (k * RING_SEGMENTS + s) * 6);
+        colors[k].toArray(ringColors, (k * RING_SEGMENTS + s) * 6 + 3);
       }
     });
     const ringGeometry = new THREE.BufferGeometry();
     ringGeometry.setAttribute('position', new THREE.BufferAttribute(rings, 3));
-    group.add(new THREE.LineSegments(ringGeometry, new THREE.LineBasicMaterial({ color: 0x4fe3f5, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false })));
+    ringGeometry.setAttribute('color', new THREE.BufferAttribute(ringColors, 3));
+    group.add(new THREE.LineSegments(ringGeometry, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false })));
     return { modules: modules.map((m) => new THREE.Vector3(m.x, m.y - 1, m.z)), files };
   }
 
@@ -342,8 +357,8 @@ export class GraphScene {
       const h = f.heat[i];
       const { halo, core } = this.nodes[i];
       const emphasis = i === f.hover || i === f.selected ? 1 : 0;
-      halo.material.color.setRGB(lerp(0.31, 1, h), lerp(0.89, 0.35, h), lerp(0.96, 0.49, h));
-      core.material.color.setRGB(lerp(0.82, 1, h), lerp(0.98, 0.88, h), lerp(1, 0.91, h));
+      halo.material.color.copy(this.haloBase[i]).lerp(HOT_HALO, h);
+      core.material.color.copy(this.coreBase[i]).lerp(HOT_CORE, h);
       const beat = i === f.editNode ? 1 + 0.12 * Math.sin(f.time * 6) * h : 1;
       core.scale.setScalar(this.sizes[i] * (1 + 0.5 * h + 0.35 * emphasis));
       halo.scale.setScalar(this.sizes[i] * (4.2 + 4 * h + 1.5 * emphasis) * beat);

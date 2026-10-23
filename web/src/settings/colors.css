@@ -1,0 +1,17 @@
+/* Color schemes for the graph. A scheme is a --package-colors list of hex,
+   rgb() or hsl() colors; packages take them in sorted name order, and repeat
+   them lighter, then darker, once the list runs out. A settings UI can switch
+   schemes by setting data-color-scheme on <html>, or set --package-colors
+   directly; the graph rereads it when it redraws.
+
+   default: the dataviz reference hues stepped for dark surfaces, checked
+   against the #04060b graph background (lightness, chroma, contrast, adjacent
+   CVD ΔE >= 8.4). Red and magenta are left out because they read as the coral
+   of an edit. Violet and blue are close (ΔE 9.8), so the ring labels, not
+   color, are what identify a package. */
+:root{
+  --package-colors: #3987e5, #d95926, #199e70, #c98500, #9085e9, #008300;
+}
+
+/* Add a scheme like this, then set <html data-color-scheme="name">:
+:root[data-color-scheme="name"]{ --package-colors: #…, #…; } */

@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -67,6 +68,42 @@ func TestGraphRouteServesTheCurrentGraphVersion(t *testing.T) {
 	response.Body.Close()
 	if response.StatusCode != http.StatusNotFound {
 		t.Fatalf("GET /missing status = %d, want 404", response.StatusCode)
+	}
+}
+
+func TestServeFileStaysInsideTheFolder(t *testing.T) {
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(secret, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(outside, "repo")
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pkg", "a.py"), []byte("def f():\n    pass\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(root, "link.txt")); err != nil {
+		t.Fatal(err)
+	}
+	live := &liveServer{view: testView(t, root)}
+	server := httptest.NewServer(live.routes())
+	t.Cleanup(server.Close)
+
+	if body := getBody(t, server.URL+"/api/file?path=pkg/a.py", "text/plain; charset=utf-8"); body != "def f():\n    pass\n" {
+		t.Fatalf("GET pkg/a.py = %q, want the file", body)
+	}
+	for _, path := range []string{"../secret.txt", secret, "link.txt", "pkg", "missing.py", ""} {
+		response, err := http.Get(server.URL + "/api/file?path=" + url.QueryEscape(path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(response.Body)
+		response.Body.Close()
+		if response.StatusCode != http.StatusNotFound || strings.Contains(string(body), "secret") {
+			t.Fatalf("GET %q = %d %q, want 404 without the file", path, response.StatusCode, body)
+		}
 	}
 }
 

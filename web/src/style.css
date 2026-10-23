@@ -91,8 +91,14 @@ button,select{font:inherit;color:inherit}
 
 .right{min-width:0;min-height:0;display:flex;flex-direction:column}
 .tabs{display:flex;flex-wrap:wrap;border-bottom:1px solid var(--line)}
+.tab{display:flex;align-items:center}
 .tabs button{min-height:44px;padding:0 18px;border:0;border-bottom:2px solid transparent;margin-bottom:-1px;background:none;color:var(--mute);font:500 12px var(--mono);cursor:pointer}
 .tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--coral)}
+.tabs .tab button[role="tab"]{padding-right:4px}
+.tabs .tabx{width:28px;padding:0;font-size:15px;visibility:hidden}
+.tab:hover .tabx,.tab:focus-within .tabx{visibility:visible}
+.tabs .tabx:hover{color:var(--coral-soft)}
+@media (hover:none){.tabs .tabx{visibility:visible}}
 .code{flex:1;min-height:200px;padding:18px 0;font:400 13px/1.85 var(--mono);overflow:auto}
 .ln{display:flex;gap:12px;padding:0 20px;white-space:pre;min-width:max-content;color:var(--ink)}
 .ln .no{width:36px;text-align:right;color:var(--mute);flex:none}
@@ -101,6 +107,7 @@ button,select{font:inherit;color:inherit}
 .ln.del{background:rgba(255,90,126,.12);color:var(--coral-soft)}
 .ln.add .no,.ln.del .no{color:inherit;opacity:.6}
 .ln.gap{color:var(--mute)}
+.ln.fn{background:rgba(79,227,245,.08);box-shadow:inset 2px 0 var(--cyan)}
 .code .none{padding:0 20px}
 .cur{display:inline-block;width:8px;height:17px;margin-left:2px;vertical-align:text-bottom;background:var(--lime);animation:blink 1s steps(1) infinite}
 @keyframes blink{50%{opacity:0}}

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { runLayout } from './graph/layoutClient.ts';
 import { buildGraph, fetchGraph, type Graph, type GraphPayload, hopsFrom, parseGraph } from './graph/load.ts';
 import { connect, getJSON, getText, postJSON } from './net/live.ts';
-import { type Ev, type Header, isRecord, parseLine, parseLog } from './session/events.ts';
+import { type Ev, type Header, isRecord, parseLine, parseLog, type Result } from './session/events.ts';
 import { fold, heatTarget, LOCK_T, nextEditTime, type Phase, previousEditTime, type ViewState } from './session/reduce.ts';
 import { GroupLabels } from './ui/labels.ts';
 import { type BlastItem, fmt, Panes } from './ui/panes.ts';
@@ -124,6 +124,22 @@ let hopsKey = '';
 let hops: Int32Array = new Int32Array(0);
 let blastItems: BlastItem[] = [];
 
+// Code pane tabs are page state, not part of the session: edits add their
+// files, selecting a node opens its file, and the viewer closes tabs. The tab
+// of the file that the current edit changed shows the diff; others show the
+// file from disk.
+let openFiles: string[] = [];
+const dismissed = new Set<string>();
+let activeFile = '';
+let activeDiff = true;
+let editPath = '';
+let lastEdit = -1;
+let fileText: Result<string> | null = null;
+let fileStamp = 0;
+let fileFocus = { line: 0, endLine: 0 };
+// The last selected callable of each file, so its tab returns to it.
+const fileFocusOf = new Map<string, { line: number; endLine: number }>();
+
 const session = (): Session => replay ?? live;
 
 // ---- Graph ---------------------------------------------------------------
@@ -140,6 +156,37 @@ function labelOf(id: string): string {
   if (i !== undefined) return shortName(i);
   const name = id.split('\u0000').pop() ?? id;
   return name.split('.').slice(-2).join('.');
+}
+
+function openFile(path: string, diff: boolean, focus?: { line: number; endLine: number }): void {
+  dismissed.delete(path);
+  if (!openFiles.includes(path)) openFiles.push(path);
+  activeFile = path;
+  activeDiff = diff;
+  if (focus) fileFocusOf.set(path, focus);
+  fileFocus = fileFocusOf.get(path) ?? { line: 0, endLine: 0 };
+  // Fetched on every open even for a diff tab, which falls back to the file
+  // when the timeline moves to another edit; the agent may have changed it.
+  const stamp = ++fileStamp;
+  fileText = null;
+  void getText(`/api/file?path=${encodeURIComponent(path)}`).then((result) => {
+    if (stamp === fileStamp) fileText = result;
+  });
+}
+
+function selectTab(path: string): void {
+  openFile(path, path === editPath);
+}
+
+function closeTab(path: string): void {
+  const i = openFiles.indexOf(path);
+  if (i < 0) return;
+  openFiles.splice(i, 1);
+  dismissed.add(path);
+  if (activeFile !== path) return;
+  const next = openFiles[Math.min(i, openFiles.length - 1)];
+  if (next) selectTab(next);
+  else activeFile = '';
 }
 
 // applyGraph lays out payload and draws it. A refresh of the same view warm
@@ -169,6 +216,13 @@ async function applyGraph(payload: GraphPayload, sameView: boolean): Promise<voi
   });
   hopsKey = '';
   hover = selected = reticleNode = -1;
+  if (!sameView) {
+    openFiles = [];
+    dismissed.clear();
+    fileFocusOf.clear();
+    activeFile = '';
+    lastEdit = -1;
+  }
   scene.setGraph(next, result, sameView);
   labels.setGraph(next, payload.root.split('/').pop() || '.');
   ui.meta.textContent = `${next.n} NODES · ${next.edges.length} EDGES`;
@@ -356,6 +410,7 @@ function setPlayUI(): void {
   ui.iconPause.toggleAttribute('hidden', !playing);
   ui.iconPlay.toggleAttribute('hidden', playing);
   ui.play.setAttribute('aria-label', playing ? 'Pause session' : 'Play session');
+  ui.play.title = playing ? 'Pause playback' : 'Play';
 }
 ui.play.addEventListener('click', () => {
   playing = !playing;
@@ -379,6 +434,7 @@ try {
 function setSpeedUI(): void {
   ui.speed.textContent = `${speed}×`;
   ui.speed.setAttribute('aria-label', `Playback speed ${speed}×`);
+  ui.speed.title = `Playback speed ${speed}×. Click for faster, Shift-click for slower.`;
   ui.speed.toggleAttribute('data-fast', speed > 1);
 }
 ui.speed.addEventListener('click', (event) => {
@@ -487,6 +543,8 @@ function endPointer(event: PointerEvent, click: boolean): void {
   pointers.delete(event.pointerId);
   if (click && count === 1 && moved < CLICK_SLOP) {
     selected = scene.nearest(event.clientX, event.clientY, 22);
+    const node = graph.payload.nodes[selected];
+    if (node) openFile(node.file, false, { line: node.line, endLine: node.endLine });
     showCard();
   }
   if (pointers.size < 2) pinch = 0;
@@ -629,15 +687,23 @@ function frame(now: number): void {
   // Panes.
   panes.renderLog(events, s, labelOf);
   panes.renderBlast(blastItems, heat, editNode < 0 ? 'No edited callable yet.' : 'The edit target has no resolved callers or callees.');
-  panes.renderTabs(s.files, s.edit?.event.path ?? '', (path) => {
-    const latest = [...events.slice(0, s.count)].reverse().find((event) => event.type === 'edit' && event.path === path);
-    if (latest) {
-      simT = latest.t;
-      followLive = false;
+  editPath = s.edit?.event.path ?? '';
+  for (const path of s.files) if (!openFiles.includes(path) && !dismissed.has(path)) openFiles.push(path);
+  const editIndex = s.edit?.index ?? -1;
+  if (editIndex !== lastEdit) {
+    lastEdit = editIndex;
+    // A new edit takes the pane only in follow mode or when nothing is open.
+    if (s.edit && (followCamera || activeFile === '')) openFile(s.edit.event.path, true);
+    else if (s.edit) {
+      dismissed.delete(editPath);
+      if (!openFiles.includes(editPath)) openFiles.push(editPath);
     }
-  });
-  panes.renderPath(graph.payload.root, s.edit?.event.path ?? '');
-  panes.renderCode(s.edit);
+  }
+  const showDiff = activeFile === '' || (activeDiff && activeFile === editPath);
+  panes.renderTabs(openFiles, activeFile, selectTab, closeTab);
+  panes.renderPath(graph.payload.root, showDiff ? editPath : activeFile);
+  if (showDiff) panes.renderCode(s.edit);
+  else panes.renderFile({ path: activeFile, text: fileText, stamp: fileStamp, ...fileFocus });
   panes.renderStatus(s);
   panes.renderBursts(events, total);
 

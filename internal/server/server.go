@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -27,6 +28,9 @@ import (
 
 // sessionListLimit is the number of logs that the session picker offers.
 const sessionListLimit = 50
+
+// fileSizeLimit is the largest file that the code pane opens.
+const fileSizeLimit = 2 << 20
 
 // Config configures Run. Sessions is the directory of the session logs.
 type Config struct {
@@ -199,6 +203,7 @@ func (s *liveServer) routes() http.Handler {
 	mux.HandleFunc("GET /api/roots", s.serveRoots)
 	mux.HandleFunc("GET /api/sessions", s.serveSessions)
 	mux.HandleFunc("GET /api/sessions/{name}", s.serveSession)
+	mux.HandleFunc("GET /api/file", s.serveFile)
 	mux.HandleFunc("POST /api/root", s.serveOpen)
 	mux.HandleFunc("POST /api/pause", func(w http.ResponseWriter, r *http.Request) {
 		s.setPaused(true)
@@ -242,6 +247,41 @@ func writeJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(value)
+}
+
+// serveFile answers with the text of a file in the current folder, path
+// relative to it. os.Root refuses a path that leaves the folder, through ".."
+// or a symbolic link.
+func (s *liveServer) serveFile(w http.ResponseWriter, r *http.Request) {
+	root := s.current().root
+	if root == "" {
+		http.Error(w, "no folder is open", http.StatusNotFound)
+		return
+	}
+	dir, err := os.OpenRoot(root)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	defer dir.Close()
+	file, err := dir.Open(filepath.FromSlash(r.URL.Query().Get("path")))
+	if err != nil {
+		http.Error(w, "no such file in the folder", http.StatusNotFound)
+		return
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		http.Error(w, "not a regular file", http.StatusNotFound)
+		return
+	}
+	if info.Size() > fileSizeLimit {
+		http.Error(w, "file is too large to show", http.StatusRequestEntityTooLarge)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = io.Copy(w, file)
 }
 
 // serveRoots answers with the current folder, or "" for no folder, and the

@@ -1,8 +1,9 @@
-import type { Ev } from '../session/events.ts';
+import type { Ev, Result } from '../session/events.ts';
 import { addedChars, type EditView, LOCK_T, type ViewState, typingDuration } from '../session/reduce.ts';
 
 const LOG_ROWS = 7;
 const CODE_ROW_LIMIT = 800;
+const FILE_ROW_LIMIT = 5000;
 // The typed diff redraws in this many steps, so a long edit costs a bounded
 // number of DOM rebuilds.
 const TYPE_STEPS = 48;
@@ -25,6 +26,17 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, t
 function firstLine(text: string, limit = 160): string {
   const line = text.split('\n').find((item) => item.trim()) ?? '';
   return line.length > limit ? `${line.slice(0, limit - 1)}…` : line;
+}
+
+// FileView is a file that the viewer opened, with the lines to show first.
+export interface FileView {
+  path: string;
+  // null while the file loads.
+  text: Result<string> | null;
+  // Changes with every load, so a reloaded file redraws.
+  stamp: number;
+  line: number;
+  endLine: number;
 }
 
 interface Row {
@@ -146,20 +158,56 @@ export class Panes {
     }
   }
 
-  renderTabs(files: string[], selected: string, select: (path: string) => void): void {
+  renderTabs(files: readonly string[], selected: string, select: (path: string) => void, close: (path: string) => void): void {
     const sig = `${files.join('\n')}|${selected}`;
     if (sig === this.tabsSig) return;
     this.tabsSig = sig;
     this.e.tabs.textContent = '';
-    for (const path of files.slice(-8)) {
-      const tab = el('button', undefined, path.split('/').pop() ?? path);
-      tab.type = 'button';
-      tab.title = path;
-      tab.setAttribute('role', 'tab');
-      tab.setAttribute('aria-selected', String(path === selected));
-      tab.addEventListener('click', () => select(path));
+    for (const path of files) {
+      const name = path.split('/').pop() ?? path;
+      const tab = el('div', 'tab');
+      const open = el('button', undefined, name);
+      open.type = 'button';
+      open.title = path;
+      open.setAttribute('role', 'tab');
+      open.setAttribute('aria-selected', String(path === selected));
+      open.addEventListener('click', () => select(path));
+      const shut = el('button', 'tabx', '×');
+      shut.type = 'button';
+      shut.title = `Close ${name}`;
+      shut.setAttribute('aria-label', `Close ${path}`);
+      shut.addEventListener('click', () => close(path));
+      tab.append(open, shut);
       this.e.tabs.appendChild(tab);
     }
+  }
+
+  // renderFile shows an opened file and scrolls its focus lines into view.
+  renderFile(file: FileView): void {
+    const sig = `file|${file.path}|${file.stamp}|${file.text === null}|${file.line}|${file.endLine}`;
+    if (sig === this.codeSig) return;
+    this.codeSig = sig;
+    const code = this.e.code;
+    code.textContent = '';
+    if (!file.text || !file.text.ok) {
+      code.appendChild(el('div', 'none', file.text ? `Cannot open ${file.path}: ${file.text.error}` : `Loading ${file.path}…`));
+      return;
+    }
+    const lines = file.text.value.split('\n');
+    if (lines.at(-1) === '') lines.pop();
+    let focus: HTMLElement | null = null;
+    for (const [i, text] of lines.slice(0, FILE_ROW_LIMIT).entries()) {
+      const number = i + 1;
+      const inFocus = number >= file.line && number <= file.endLine;
+      const row = el('div', inFocus ? 'ln fn' : 'ln');
+      row.appendChild(el('span', 'no', String(number)));
+      row.appendChild(el('span', 'sg', ''));
+      row.appendChild(el('span', undefined, text));
+      code.appendChild(row);
+      if (inFocus && !focus) focus = row;
+    }
+    if (lines.length > FILE_ROW_LIMIT) code.appendChild(el('div', 'none', `File shortened to ${FILE_ROW_LIMIT} lines.`));
+    code.scrollTop = focus ? code.scrollTop + focus.getBoundingClientRect().top - code.getBoundingClientRect().top - code.clientHeight / 3 : 0;
   }
 
   renderPath(root: string, path: string): void {

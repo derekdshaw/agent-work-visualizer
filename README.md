@@ -95,9 +95,13 @@ web/src/ui                 stream, blast radius, code pane, scrubber, panes, wor
 - **Agent stream.** One row per event: requests, the agent's plans, reads,
   edits, tool calls, subagents, and commands with their result. Subagent rows
   carry the subagent's ID.
-- **Code pane.** Tabs for the files edited so far, the full path of the current
-  file, and the edit's diff typed out line by line. The status bar shows the
-  latest command and the phase.
+- **Code pane.** A tab opens for each file the agent edits and for the file
+  of each node you click; tabs stay open until you close them with the × that
+  appears on hover. The tab of the file that the current edit changed shows
+  the edit's diff typed out line by line. Every other tab shows the file as it
+  is on disk now, scrolled to the selected callable. With Follow edit on, a new
+  edit switches the pane to its diff. The status bar shows the latest command
+  and the phase.
 - **Scrubber.** Coral bursts mark edits. Drag to any time; everything on the
   page is computed from the events up to that time, so scrubbing and replay
   need no other state. The speed button cycles 1×, 2×, 4×, 8×, and 16×

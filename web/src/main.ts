@@ -4,6 +4,7 @@ import { buildGraph, fetchGraph, type Graph, type GraphPayload, hopsFrom, parseG
 import { connect, getJSON, getText, postJSON } from './net/live.ts';
 import { type Ev, type Header, isRecord, parseLine, parseLog } from './session/events.ts';
 import { fold, heatTarget, LOCK_T, nextEditTime, type Phase, previousEditTime, type ViewState } from './session/reduce.ts';
+import { GroupLabels } from './ui/labels.ts';
 import { type BlastItem, fmt, Panes } from './ui/panes.ts';
 import { bindPanes } from './ui/split.ts';
 import { bindTree } from './ui/tree.ts';
@@ -38,6 +39,7 @@ const panes = new Panes(
   reducedMotion,
 );
 bindPanes(byId('main', HTMLElement), byId('splitL', HTMLElement), byId('splitR', HTMLElement));
+const labels = new GroupLabels(byId('glabels', HTMLElement));
 const tree = bindTree(byId('treeForm', HTMLFormElement), byId('treeInput', HTMLInputElement), byId('treeList', HTMLDataListElement), byId('treeSt', HTMLElement), (path) => {
   void openTree(path);
 });
@@ -154,7 +156,7 @@ async function applyGraph(payload: GraphPayload, sameView: boolean): Promise<voi
     });
   }
   if (!sameView) tree.setStatus(`LAYOUT · ${next.n} NODES`, 'busy');
-  const result = await runLayout({ n: next.n, edges: next.edges, modOf: next.modOf, moduleCount: next.modules.length, previous, seed: 11 });
+  const result = await runLayout({ n: next.n, edges: next.edges, modOf: next.modOf, moduleCount: next.modules.length, fileOf: next.fileOf, fileCount: next.files.length, previous, seed: 11 });
   if (generation !== graphGeneration) return;
   const oldHeat = heat;
   const oldGraph = graph;
@@ -168,6 +170,7 @@ async function applyGraph(payload: GraphPayload, sameView: boolean): Promise<voi
   hopsKey = '';
   hover = selected = reticleNode = -1;
   scene.setGraph(next, result, sameView);
+  labels.setGraph(next, payload.root.split('/').pop() || '.');
   ui.meta.textContent = `${next.n} NODES · ${next.edges.length} EDGES`;
   ui.sessionBranch.textContent = payload.branch ? ` · ${payload.branch}` : '';
   tree.setRoot(payload.root);
@@ -437,6 +440,8 @@ function liveEnd(s: Session): number {
 const pointers = new Map<number, { x: number; y: number }>();
 let moved = 0;
 let pinch = 0;
+// A right or Shift drag pans instead of orbiting.
+let panning = false;
 let pointer: { x: number; y: number } | null = null;
 
 function pinchDistance(): number {
@@ -450,6 +455,7 @@ stage.addEventListener('pointerdown', (event) => {
   pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
   moved = 0;
   lastInteract = clock;
+  panning = event.button === 2 || event.shiftKey;
   if (pointers.size === 2) pinch = pinchDistance();
 });
 stage.addEventListener('pointermove', (event) => {
@@ -461,8 +467,11 @@ stage.addEventListener('pointermove', (event) => {
     last.y = event.clientY;
     moved += Math.abs(dx) + Math.abs(dy);
     lastInteract = clock;
-    if (pointers.size === 1) scene.orbit.rotate(dx, dy);
+    if (pointers.size === 1 && panning) scene.orbit.pan(dx, dy);
+    else if (pointers.size === 1) scene.orbit.rotate(dx, dy);
     else if (pointers.size === 2) {
+      // Each finger moves the midpoint by half its own movement.
+      scene.orbit.pan(dx / 2, dy / 2);
       const d = pinchDistance();
       if (pinch > 0 && d > 0) scene.orbit.zoom(pinch / d);
       pinch = d;
@@ -491,6 +500,7 @@ stage.addEventListener('pointerleave', (event) => {
     stage.classList.remove('hov');
   }
 });
+stage.addEventListener('contextmenu', (event) => event.preventDefault());
 stage.addEventListener(
   'wheel',
   (event) => {
@@ -663,6 +673,7 @@ function frame(now: number): void {
       ui.lock.classList.toggle('scan', status === 'ACQUIRING');
     }
   } else ui.lock.hidden = true;
+  if (scene.renderer) labels.render(scene, new Set([graph.modOf[hover], graph.modOf[editNode]].filter((m) => m !== undefined)));
   const hovered = hover >= 0 ? scene.position(hover) : null;
   if (hovered && pointers.size === 0) {
     const hs = scene.toScreen(hovered);

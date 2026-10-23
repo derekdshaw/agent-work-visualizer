@@ -130,7 +130,7 @@ export class Panes {
       this.blastRows = [];
       if (!items.length) this.e.blast.appendChild(el('div', 'none', empty));
       for (const item of items) {
-        const row = el('div', 'br');
+        const row = el('div', 'brow');
         row.appendChild(el('span', undefined, item.name));
         row.appendChild(el('span', undefined, `${item.hop} ${item.hop === 1 ? 'hop' : 'hops'}`));
         this.e.blast.appendChild(row);

@@ -5,7 +5,8 @@ import { layout, type LayoutInput } from './layout.ts';
 function input(n: number, previous: Float32Array | null = null): LayoutInput {
   const edges: Array<[number, number]> = [];
   for (let i = 1; i < n; i++) edges.push([Math.floor(i / 2), i]);
-  return { n, edges, modOf: Array.from({ length: n }, (_, i) => i % 7), moduleCount: 7, previous, seed: 11 };
+  const modOf = Array.from({ length: n }, (_, i) => i % 7);
+  return { n, edges, modOf, moduleCount: 7, fileOf: modOf.map((m, i) => m * 3 + (i % 3)), fileCount: 21, previous, seed: 11 };
 }
 
 function finite(positions: Float32Array): boolean {
@@ -45,4 +46,24 @@ test('a large graph uses the grid and stays finite', () => {
   const result = layout(input(1200));
   assert.ok(finite(result.positions));
   assert.ok(result.radius > layout(input(80)).radius);
+});
+
+test('a file packs tighter than its module, a module tighter than the graph', () => {
+  // 2 modules × 3 files × 6 nodes, no edges: grouping comes from the pulls alone.
+  const n = 36;
+  const fileOf = Array.from({ length: n }, (_, i) => Math.floor(i / 6));
+  const modOf = fileOf.map((f) => Math.floor(f / 3));
+  const { positions } = layout({ n, edges: [], modOf, moduleCount: 2, fileOf, fileCount: 6, previous: null, seed: 11 });
+  const sums = { file: [0, 0], module: [0, 0], cross: [0, 0] };
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const d = Math.hypot(...[0, 1, 2].map((k) => positions[i * 3 + k] - positions[j * 3 + k]));
+      const bucket = fileOf[i] === fileOf[j] ? sums.file : modOf[i] === modOf[j] ? sums.module : sums.cross;
+      bucket[0] += d;
+      bucket[1]++;
+    }
+  }
+  const mean = (bucket: number[]) => bucket[0] / bucket[1];
+  assert.ok(mean(sums.file) < mean(sums.module), `file ${mean(sums.file)} vs module ${mean(sums.module)}`);
+  assert.ok(mean(sums.module) < mean(sums.cross), `module ${mean(sums.module)} vs cross ${mean(sums.cross)}`);
 });

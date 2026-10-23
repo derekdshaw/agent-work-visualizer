@@ -12,6 +12,13 @@ that replays with a scrubber. The server and the page need no network access.
 Building needs Go 1.24 or newer, a C compiler for the Tree-sitter bindings,
 and Node 22.18 or newer for the web build.
 
+> If your `package-lock.json` and `package.json` are out of sync do the following first before building.
+
+```sh
+npm --prefix web install --package-lock-only
+```
+Normal build process is as follows. The `ci` build syncs `node_modules` to what the `package-lock.json` specifies.
+
 ```sh
 npm --prefix web ci
 npm --prefix web run build      # writes internal/server/web/dist, which go build embeds
@@ -69,8 +76,12 @@ web/src/ui                 stream, blast radius, code pane, scrubber, panes, wor
 
 ## The page
 
-- **Graph.** Each node is a callable, grouped into clusters by directory.
-  Drag to orbit, scroll or pinch to zoom, click a node for its details.
+- **Graph.** Each node is a callable, grouped into clusters by directory,
+  and within a directory into sub-clusters by file. A ring under each
+  directory's cluster carries its name; file names appear for the directory
+  under the pointer and the one the agent edits.
+  Drag to orbit, right-drag, Shift-drag, or drag two fingers to pan, scroll
+  or pinch to zoom, click a node for its details. Reset view also clears the pan.
   Auto-rotate pauses while you interact, and follow mode eases the camera
   toward the active node. Glow is additive sprites with fog for depth.
 - **Reticle.** A read moves the reticle onto the callable that the agent read

@@ -42,6 +42,8 @@ export interface Graph {
   edges: Array<[number, number]>;
   modules: string[];
   modOf: number[];
+  files: string[];
+  fileOf: number[];
 }
 
 // FAR is the hop count of a node that the target does not reach.
@@ -116,6 +118,9 @@ export function buildGraph(payload: GraphPayload): Graph {
   }
   const modules: string[] = [];
   const moduleIndex = new Map<string, number>();
+  const files: string[] = [];
+  const fileIndex = new Map<string, number>();
+  const fileOf: number[] = [];
   const modOf = payload.nodes.map((node) => {
     let m = moduleIndex.get(node.module);
     if (m === undefined) {
@@ -123,9 +128,16 @@ export function buildGraph(payload: GraphPayload): Graph {
       moduleIndex.set(node.module, m);
       modules.push(node.module);
     }
+    let f = fileIndex.get(node.file);
+    if (f === undefined) {
+      f = files.length;
+      fileIndex.set(node.file, f);
+      files.push(node.file);
+    }
+    fileOf.push(f);
     return m;
   });
-  return { payload, n, index, adj, deg: adj.map((list) => list.length), edges, modules, modOf };
+  return { payload, n, index, adj, deg: adj.map((list) => list.length), edges, modules, modOf, files, fileOf };
 }
 
 // hopsFrom returns the graph distance from node s to every node, FAR for a

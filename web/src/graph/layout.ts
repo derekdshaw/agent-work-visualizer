@@ -7,6 +7,8 @@ export interface LayoutInput {
   edges: Array<[number, number]>;
   modOf: number[];
   moduleCount: number;
+  fileOf: number[];
+  fileCount: number;
   // Positions from an earlier layout, x y z per node, NaN for a node without
   // one. Null starts cold. A warm start keeps the picture stable after the
   // graph is reindexed.
@@ -29,6 +31,12 @@ const WARM_ITERATIONS = 90;
 const EXACT_LIMIT = 900;
 const CUTOFF = 14;
 const Y_SQUASH = 0.85;
+// Pull toward the module center. Edges across modules stretch clusters, so it
+// must be strong enough that module rings stay mostly apart.
+const MODULE_PULL = 0.1;
+// Pull toward the centroid of the node's file, so a file reads as a sub-cluster
+// inside its module cluster.
+const FILE_PULL = 0.06;
 
 export function mulberry32(seed: number): () => number {
   let a = seed;
@@ -55,7 +63,7 @@ function moduleCenters(moduleCount: number, scale: number): number[][] {
 }
 
 export function layout(input: LayoutInput): LayoutResult {
-  const { n, edges, modOf } = input;
+  const { n, edges, modOf, fileOf } = input;
   const scale = Math.max(1, Math.cbrt(n / 60));
   const centers = moduleCenters(input.moduleCount, scale);
   const rnd = mulberry32(input.seed);
@@ -89,8 +97,13 @@ export function layout(input: LayoutInput): LayoutResult {
   const warm = previous !== null;
   const iterations = warm ? WARM_ITERATIONS : COLD_ITERATIONS;
   const F = new Float64Array(n * 3);
+  const fileSum = new Float64Array(input.fileCount * 3);
+  const fileSize = new Float64Array(input.fileCount);
+  for (let i = 0; i < n; i++) fileSize[fileOf[i]]++;
   for (let it = 0; it < iterations; it++) {
     F.fill(0);
+    fileSum.fill(0);
+    for (let i = 0; i < n; i++) for (let d = 0; d < 3; d++) fileSum[fileOf[i] * 3 + d] += P[i * 3 + d];
     if (n <= EXACT_LIMIT) repelExact(P, F, n);
     else repelGrid(P, F, n);
     for (const [a, b] of edges) {
@@ -109,7 +122,8 @@ export function layout(input: LayoutInput): LayoutResult {
     const cool = (1 - (it / iterations) * 0.7) * (warm ? 0.6 : 1);
     for (let i = 0; i < n; i++) {
       const c = centers[modOf[i] % centers.length];
-      for (let d = 0; d < 3; d++) F[i * 3 + d] += (c[d] - P[i * 3 + d]) * 0.03;
+      const f = fileOf[i];
+      for (let d = 0; d < 3; d++) F[i * 3 + d] += (c[d] - P[i * 3 + d]) * MODULE_PULL + (fileSum[f * 3 + d] / fileSize[f] - P[i * 3 + d]) * FILE_PULL;
       const m = Math.hypot(F[i * 3], F[i * 3 + 1], F[i * 3 + 2]);
       const s = m > 1.5 ? 1.5 / m : 1;
       for (let d = 0; d < 3; d++) P[i * 3 + d] += F[i * 3 + d] * s * 0.5 * cool;

@@ -9,6 +9,8 @@ function isLayoutInput(value: unknown): value is LayoutInput {
     Array.isArray(value['edges']) &&
     Array.isArray(value['modOf']) &&
     typeof value['moduleCount'] === 'number' &&
+    Array.isArray(value['fileOf']) &&
+    typeof value['fileCount'] === 'number' &&
     typeof value['seed'] === 'number' &&
     (value['previous'] === null || value['previous'] instanceof Float32Array)
   );

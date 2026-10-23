@@ -54,7 +54,7 @@
   <div class="split" id="splitL" role="separator" aria-orientation="vertical" aria-label="Resize agent stream panel" tabindex="0"></div>
 
   <section class="stage" id="stage">
-    <canvas id="gl" role="img" aria-label="Interactive 3D call graph of the working tree. Drag to orbit, scroll to zoom, click a node to inspect it. A coral target marks the callable the agent is editing."></canvas>
+    <canvas id="gl" role="img" aria-label="Interactive 3D call graph of the working tree. Drag to orbit, right or Shift drag to pan, scroll to zoom, click a node to inspect it. A coral target marks the callable the agent is editing."></canvas>
     <div class="vig"></div>
     <div class="hud tl"><b>VIEWPORT · ORBIT</b><span id="cam">AZ 0° EL 0°</span></div>
     <div class="hud tr" id="focus" hidden></div>
@@ -65,7 +65,7 @@
     <div class="hud bl">
       <span><i class="dot" style="background:var(--cyan)"></i>STABLE</span>
       <span><i class="dot" style="background:var(--coral)"></i>EDITING</span>
-      <span>DRAG · SCROLL · CLICK</span>
+      <span>DRAG · SHIFT-DRAG PAN · SCROLL · CLICK</span>
     </div>
     <div class="tools">
       <button class="btn" id="btnRot" type="button" aria-pressed="true" aria-label="Auto-rotate">
@@ -78,6 +78,7 @@
         <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="6"/><circle cx="10" cy="10" r="1.5" fill="currentColor"/><path d="M10 1 V4 M10 16 V19 M1 10 H4 M16 10 H19"/></svg>
       </button>
     </div>
+    <div class="glabels" id="glabels" aria-hidden="true"></div>
     <div class="lock" id="lock" hidden><span class="st" id="lockSt">ACQUIRING</span><span id="lockName"></span></div>
     <div class="tip" id="tip" hidden></div>
     <div class="empty" id="empty" hidden></div>

@@ -31,6 +31,15 @@ export interface FrameInput {
   rotate: boolean;
 }
 
+// Anchors that the group labels follow: a module's ring under its cluster,
+// a file's centroid.
+export interface Groups {
+  modules: THREE.Vector3[];
+  files: THREE.Vector3[];
+}
+
+const RING_SEGMENTS = 48;
+
 interface NodeSprites {
   halo: THREE.Sprite;
   core: THREE.Sprite;
@@ -109,6 +118,7 @@ export class GraphScene {
   readonly reticlePosition = new THREE.Vector3();
   private reticleShown = false;
   private readonly projected = new THREE.Vector3();
+  groups: Groups = { modules: [], files: [] };
 
   constructor(canvas: HTMLCanvasElement, stage: HTMLElement) {
     this.stage = stage;
@@ -211,6 +221,8 @@ export class GraphScene {
     starGeometry.setAttribute('position', new THREE.BufferAttribute(stars, 3));
     group.add(new THREE.Points(starGeometry, new THREE.PointsMaterial({ color: 0x4fe3f5, size: 0.35 * spread, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false, fog: false })));
 
+    this.groups = this.drawGroups(graph, group);
+
     const edgePositions = new Float32Array(this.edges.length * 6);
     this.edges.forEach(([a, b], k) => {
       const va = this.vectors[a];
@@ -233,6 +245,56 @@ export class GraphScene {
       return { halo, core };
     });
     if (!this.reticleShown) this.reticlePosition.set(0, 0, 0);
+  }
+
+  // drawGroups rings each module's cluster just below it. Module centers sit on
+  // a sphere, so rings on the shared floor would overlap.
+  private drawGroups(graph: Graph, group: THREE.Group): Groups {
+    const modules = graph.modules.map(() => ({ x: 0, z: 0, y: 0, r: 0, count: 0 }));
+    const files = graph.files.map(() => new THREE.Vector3());
+    const fileCount = new Array<number>(graph.files.length).fill(0);
+    this.vectors.forEach((v, i) => {
+      const m = modules[graph.modOf[i]];
+      m.x += v.x;
+      m.z += v.z;
+      m.count++;
+      files[graph.fileOf[i]].add(v);
+      fileCount[graph.fileOf[i]]++;
+    });
+    for (const m of modules) {
+      m.x /= m.count;
+      m.z /= m.count;
+    }
+    files.forEach((v, f) => v.divideScalar(fileCount[f]));
+    // The ring encloses 80% of a module's nodes, and sits under 80% of them:
+    // the rest are pulled out by calls into other modules and would make
+    // every ring overlap or hang far below its cluster.
+    const distances = modules.map(() => [] as number[]);
+    const heights = modules.map(() => [] as number[]);
+    this.vectors.forEach((v, i) => {
+      const m = modules[graph.modOf[i]];
+      distances[graph.modOf[i]].push(Math.hypot(v.x - m.x, v.z - m.z));
+      heights[graph.modOf[i]].push(v.y);
+    });
+    modules.forEach((m, k) => {
+      const d = distances[k].sort((a, b) => a - b);
+      const h = heights[k].sort((a, b) => a - b);
+      m.r = d[Math.floor(0.8 * (d.length - 1))];
+      m.y = h[Math.floor(0.2 * (h.length - 1))];
+    });
+    const rings = new Float32Array(modules.length * RING_SEGMENTS * 6);
+    modules.forEach((m, k) => {
+      const r = Math.max(1.5, m.r + 1);
+      for (let s = 0; s < RING_SEGMENTS; s++) {
+        const a0 = (s / RING_SEGMENTS) * Math.PI * 2;
+        const a1 = ((s + 1) / RING_SEGMENTS) * Math.PI * 2;
+        rings.set([m.x + r * Math.cos(a0), m.y - 1, m.z + r * Math.sin(a0), m.x + r * Math.cos(a1), m.y - 1, m.z + r * Math.sin(a1)], (k * RING_SEGMENTS + s) * 6);
+      }
+    });
+    const ringGeometry = new THREE.BufferGeometry();
+    ringGeometry.setAttribute('position', new THREE.BufferAttribute(rings, 3));
+    group.add(new THREE.LineSegments(ringGeometry, new THREE.LineBasicMaterial({ color: 0x4fe3f5, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false })));
+    return { modules: modules.map((m) => new THREE.Vector3(m.x, m.y - 1, m.z)), files };
   }
 
   position(i: number): THREE.Vector3 | null {

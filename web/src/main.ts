@@ -440,7 +440,7 @@ function liveEnd(s: Session): number {
 const pointers = new Map<number, { x: number; y: number }>();
 let moved = 0;
 let pinch = 0;
-// A right or Shift drag pans instead of orbiting.
+// A Shift drag pans instead of orbiting.
 let panning = false;
 let pointer: { x: number; y: number } | null = null;
 
@@ -455,7 +455,7 @@ stage.addEventListener('pointerdown', (event) => {
   pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
   moved = 0;
   lastInteract = clock;
-  panning = event.button === 2 || event.shiftKey;
+  panning = event.shiftKey;
   if (pointers.size === 2) pinch = pinchDistance();
 });
 stage.addEventListener('pointermove', (event) => {
@@ -467,11 +467,11 @@ stage.addEventListener('pointermove', (event) => {
     last.y = event.clientY;
     moved += Math.abs(dx) + Math.abs(dy);
     lastInteract = clock;
-    if (pointers.size === 1 && panning) scene.orbit.pan(dx, dy);
+    if (pointers.size === 1 && panning) scene.orbit.pan(dx / scene.size.width, dy / scene.size.height);
     else if (pointers.size === 1) scene.orbit.rotate(dx, dy);
     else if (pointers.size === 2) {
       // Each finger moves the midpoint by half its own movement.
-      scene.orbit.pan(dx / 2, dy / 2);
+      scene.orbit.pan(dx / 2 / scene.size.width, dy / 2 / scene.size.height);
       const d = pinchDistance();
       if (pinch > 0 && d > 0) scene.orbit.zoom(pinch / d);
       pinch = d;
@@ -500,7 +500,6 @@ stage.addEventListener('pointerleave', (event) => {
     stage.classList.remove('hov');
   }
 });
-stage.addEventListener('contextmenu', (event) => event.preventDefault());
 stage.addEventListener(
   'wheel',
   (event) => {

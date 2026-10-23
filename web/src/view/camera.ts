@@ -8,9 +8,11 @@ const clamp = (value: number, lo: number, hi: number) => Math.max(lo, Math.min(h
 export class Orbit {
   readonly camera = new THREE.PerspectiveCamera(48, 1, 0.1, 2000);
   readonly center = new THREE.Vector3();
-  // Panned offset of the center from where it would ease to otherwise.
-  readonly offset = new THREE.Vector3();
-  private readonly axis = new THREE.Vector3();
+  // Pan slides the rendered picture, as fractions of the viewport, so it
+  // moves flat with the pointer instead of shifting the camera and its
+  // perspective.
+  private slideX = 0;
+  private slideY = 0;
   az = 0.6;
   el = 0.38;
   dist = 44;
@@ -28,14 +30,13 @@ export class Orbit {
     this.az = this.az0;
     this.el = this.el0;
     this.dist = this.home;
-    this.offset.set(0, 0, 0);
+    this.slideX = this.slideY = 0;
   }
 
-  // pan shifts the view in the screen plane by a pointer movement in pixels.
-  pan(dx: number, dy: number): void {
-    const k = this.dist * 0.0015;
-    this.offset.addScaledVector(this.axis.setFromMatrixColumn(this.camera.matrixWorld, 0), -dx * k);
-    this.offset.addScaledVector(this.axis.setFromMatrixColumn(this.camera.matrixWorld, 1), dy * k);
+  // pan slides the picture by a pointer movement given as viewport fractions.
+  pan(fx: number, fy: number): void {
+    this.slideX -= fx;
+    this.slideY -= fy;
   }
 
   rotate(dx: number, dy: number): void {
@@ -50,9 +51,9 @@ export class Orbit {
   // ease moves the center toward goal, or toward the origin without one.
   ease(goal: THREE.Vector3 | null, dt: number): void {
     const k = 1 - Math.exp(-dt * 3);
-    const gx = (goal ? goal.x * 0.5 : 0) + this.offset.x;
-    const gy = (goal ? goal.y * 0.5 : 0) + this.offset.y;
-    const gz = (goal ? goal.z * 0.5 : 0) + this.offset.z;
+    const gx = goal ? goal.x * 0.5 : 0;
+    const gy = goal ? goal.y * 0.5 : 0;
+    const gz = goal ? goal.z * 0.5 : 0;
     this.center.x += (gx - this.center.x) * k;
     this.center.y += (gy - this.center.y) * k;
     this.center.z += (gz - this.center.z) * k;
@@ -69,6 +70,10 @@ export class Orbit {
       this.center.z + d * Math.cos(this.az) * ce,
     );
     camera.lookAt(this.center);
+    // The view offset is relative to its full size, and setViewOffset sets the
+    // aspect from it, so the full size is aspect × 1.
+    const a = camera.aspect;
+    camera.setViewOffset(a, 1, this.slideX * a, this.slideY, a, 1);
     camera.updateMatrixWorld();
   }
 

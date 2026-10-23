@@ -80,7 +80,7 @@ web/src/ui                 stream, blast radius, code pane, scrubber, panes, wor
   and within a directory into sub-clusters by file. A ring under each
   directory's cluster carries its name; file names appear for the directory
   under the pointer and the one the agent edits.
-  Drag to orbit, right-drag, Shift-drag, or drag two fingers to pan, scroll
+  Drag to orbit, Shift-drag or drag two fingers to pan, scroll
   or pinch to zoom, click a node for its details. Reset view also clears the pan.
   Auto-rotate pauses while you interact, and follow mode eases the camera
   toward the active node. Glow is additive sprites with fog for depth.

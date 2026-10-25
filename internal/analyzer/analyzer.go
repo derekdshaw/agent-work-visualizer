@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/derek-shaw/agent-work-visualizer/internal/callgraph"
-	"github.com/derek-shaw/agent-work-visualizer/internal/progress"
+	"github.com/derekdshaw/agent-work-visualizer/internal/callgraph"
+	"github.com/derekdshaw/agent-work-visualizer/internal/progress"
 )
 
 // Language analyzes every source file of one language in a tree. Calls are

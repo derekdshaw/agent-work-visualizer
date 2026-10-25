@@ -21,8 +21,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/derek-shaw/agent-work-visualizer/internal/activity"
-	"github.com/derek-shaw/agent-work-visualizer/internal/transcript"
+	"github.com/derekdshaw/agent-work-visualizer/internal/activity"
+	"github.com/derekdshaw/agent-work-visualizer/internal/transcript"
 )
 
 // GapCap is the longest idle time, in seconds, between two events on the

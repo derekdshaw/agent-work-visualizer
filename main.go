@@ -6,14 +6,14 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/derek-shaw/agent-work-visualizer/internal/analyzer"
-	"github.com/derek-shaw/agent-work-visualizer/internal/lang/golang"
-	"github.com/derek-shaw/agent-work-visualizer/internal/lang/java"
-	"github.com/derek-shaw/agent-work-visualizer/internal/lang/python"
-	"github.com/derek-shaw/agent-work-visualizer/internal/lang/rust"
-	"github.com/derek-shaw/agent-work-visualizer/internal/lang/typescript"
-	"github.com/derek-shaw/agent-work-visualizer/internal/server"
-	"github.com/derek-shaw/agent-work-visualizer/internal/session"
+	"github.com/derekdshaw/agent-work-visualizer/internal/analyzer"
+	"github.com/derekdshaw/agent-work-visualizer/internal/lang/golang"
+	"github.com/derekdshaw/agent-work-visualizer/internal/lang/java"
+	"github.com/derekdshaw/agent-work-visualizer/internal/lang/python"
+	"github.com/derekdshaw/agent-work-visualizer/internal/lang/rust"
+	"github.com/derekdshaw/agent-work-visualizer/internal/lang/typescript"
+	"github.com/derekdshaw/agent-work-visualizer/internal/server"
+	"github.com/derekdshaw/agent-work-visualizer/internal/session"
 )
 
 const defaultPort = 7777

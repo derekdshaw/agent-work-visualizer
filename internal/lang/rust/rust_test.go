@@ -3,8 +3,8 @@ package rust
 import (
 	"testing"
 
-	"github.com/derek-shaw/agent-work-visualizer/internal/analyzer"
-	"github.com/derek-shaw/agent-work-visualizer/internal/lang/langtest"
+	"github.com/derekdshaw/agent-work-visualizer/internal/analyzer"
+	"github.com/derekdshaw/agent-work-visualizer/internal/lang/langtest"
 )
 
 func TestAnalyzeRustResolutionEntrypointsAndTests(t *testing.T) {

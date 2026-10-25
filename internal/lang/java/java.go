@@ -10,8 +10,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/derek-shaw/agent-work-visualizer/internal/callgraph"
-	"github.com/derek-shaw/agent-work-visualizer/internal/lang/langutil"
+	"github.com/derekdshaw/agent-work-visualizer/internal/callgraph"
+	"github.com/derekdshaw/agent-work-visualizer/internal/lang/langutil"
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 	tree_sitter_java "github.com/tree-sitter/tree-sitter-java/bindings/go"
 )

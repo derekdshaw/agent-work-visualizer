@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/derek-shaw/agent-work-visualizer/internal/analyzer"
-	"github.com/derek-shaw/agent-work-visualizer/internal/callgraph"
-	"github.com/derek-shaw/agent-work-visualizer/internal/lang/langtest"
+	"github.com/derekdshaw/agent-work-visualizer/internal/analyzer"
+	"github.com/derekdshaw/agent-work-visualizer/internal/callgraph"
+	"github.com/derekdshaw/agent-work-visualizer/internal/lang/langtest"
 )
 
 func TestAnalyzeResolutionEntrypointsAndDeterminism(t *testing.T) {

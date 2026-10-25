@@ -11,11 +11,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/derek-shaw/agent-work-visualizer/internal/activity"
-	"github.com/derek-shaw/agent-work-visualizer/internal/analyzer"
-	"github.com/derek-shaw/agent-work-visualizer/internal/callgraph"
-	"github.com/derek-shaw/agent-work-visualizer/internal/session"
-	"github.com/derek-shaw/agent-work-visualizer/internal/transcript"
+	"github.com/derekdshaw/agent-work-visualizer/internal/activity"
+	"github.com/derekdshaw/agent-work-visualizer/internal/analyzer"
+	"github.com/derekdshaw/agent-work-visualizer/internal/callgraph"
+	"github.com/derekdshaw/agent-work-visualizer/internal/session"
+	"github.com/derekdshaw/agent-work-visualizer/internal/transcript"
 )
 
 const (

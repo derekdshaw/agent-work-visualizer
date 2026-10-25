@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/derek-shaw/agent-work-visualizer/internal/transcript/transcripttest"
+	"github.com/derekdshaw/agent-work-visualizer/internal/transcript/transcripttest"
 )
 
 // writeLines writes a file of count numbered lines under dir.

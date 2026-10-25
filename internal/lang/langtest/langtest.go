@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/derek-shaw/agent-work-visualizer/internal/analyzer"
-	"github.com/derek-shaw/agent-work-visualizer/internal/callgraph"
+	"github.com/derekdshaw/agent-work-visualizer/internal/analyzer"
+	"github.com/derekdshaw/agent-work-visualizer/internal/callgraph"
 )
 
 // Analyze runs the orchestrator with only the given languages registered.

@@ -1,4 +1,4 @@
-module github.com/derek-shaw/agent-work-visualizer
+module github.com/derekdshaw/agent-work-visualizer
 
 go 1.24
 

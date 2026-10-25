@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/derek-shaw/agent-work-visualizer/internal/transcript/transcripttest"
+	"github.com/derekdshaw/agent-work-visualizer/internal/transcript/transcripttest"
 )
 
 // The expected names come from the encoder in Claude Code 2.1.296.

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/derek-shaw/agent-work-visualizer/internal/lang/langtest"
-	"github.com/derek-shaw/agent-work-visualizer/internal/transcript/transcripttest"
+	"github.com/derekdshaw/agent-work-visualizer/internal/lang/langtest"
+	"github.com/derekdshaw/agent-work-visualizer/internal/transcript/transcripttest"
 )
 
 func TestRootChoices(t *testing.T) {

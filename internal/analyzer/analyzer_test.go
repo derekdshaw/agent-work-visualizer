@@ -8,15 +8,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/derek-shaw/agent-work-visualizer/internal/activity"
-	"github.com/derek-shaw/agent-work-visualizer/internal/analyzer"
-	"github.com/derek-shaw/agent-work-visualizer/internal/callgraph"
-	"github.com/derek-shaw/agent-work-visualizer/internal/lang/golang"
-	"github.com/derek-shaw/agent-work-visualizer/internal/lang/java"
-	"github.com/derek-shaw/agent-work-visualizer/internal/lang/langtest"
-	"github.com/derek-shaw/agent-work-visualizer/internal/lang/python"
-	"github.com/derek-shaw/agent-work-visualizer/internal/lang/rust"
-	"github.com/derek-shaw/agent-work-visualizer/internal/lang/typescript"
+	"github.com/derekdshaw/agent-work-visualizer/internal/activity"
+	"github.com/derekdshaw/agent-work-visualizer/internal/analyzer"
+	"github.com/derekdshaw/agent-work-visualizer/internal/callgraph"
+	"github.com/derekdshaw/agent-work-visualizer/internal/lang/golang"
+	"github.com/derekdshaw/agent-work-visualizer/internal/lang/java"
+	"github.com/derekdshaw/agent-work-visualizer/internal/lang/langtest"
+	"github.com/derekdshaw/agent-work-visualizer/internal/lang/python"
+	"github.com/derekdshaw/agent-work-visualizer/internal/lang/rust"
+	"github.com/derekdshaw/agent-work-visualizer/internal/lang/typescript"
 )
 
 func TestRejectsGoRustAndTypescriptSyntaxErrors(t *testing.T) {

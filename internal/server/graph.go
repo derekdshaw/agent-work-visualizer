@@ -1,8 +1,8 @@
 package server
 
 import (
-	"github.com/derek-shaw/agent-work-visualizer/internal/activity"
-	"github.com/derek-shaw/agent-work-visualizer/internal/callgraph"
+	"github.com/derekdshaw/agent-work-visualizer/internal/activity"
+	"github.com/derekdshaw/agent-work-visualizer/internal/callgraph"
 )
 
 // graphPayload is the answer of GET /api/graph. View names the session log

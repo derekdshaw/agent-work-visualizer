@@ -21,9 +21,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/derek-shaw/agent-work-visualizer/internal/analyzer"
-	"github.com/derek-shaw/agent-work-visualizer/internal/session"
-	"github.com/derek-shaw/agent-work-visualizer/internal/transcript"
+	"github.com/derekdshaw/agent-work-visualizer/internal/analyzer"
+	"github.com/derekdshaw/agent-work-visualizer/internal/session"
+	"github.com/derekdshaw/agent-work-visualizer/internal/transcript"
 )
 
 // sessionListLimit is the number of logs that the session picker offers.

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/derek-shaw/agent-work-visualizer/internal/transcript"
+	"github.com/derekdshaw/agent-work-visualizer/internal/transcript"
 )
 
 // recentSessionAge is the age of the newest session transcript of a folder

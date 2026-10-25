@@ -25,14 +25,14 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/derek-shaw/agent-work-visualizer/internal/activity"
-	"github.com/derek-shaw/agent-work-visualizer/internal/analyzer"
-	"github.com/derek-shaw/agent-work-visualizer/internal/callgraph"
-	"github.com/derek-shaw/agent-work-visualizer/internal/lang/langtest"
-	"github.com/derek-shaw/agent-work-visualizer/internal/lang/python"
-	"github.com/derek-shaw/agent-work-visualizer/internal/session"
-	"github.com/derek-shaw/agent-work-visualizer/internal/transcript"
-	"github.com/derek-shaw/agent-work-visualizer/internal/transcript/transcripttest"
+	"github.com/derekdshaw/agent-work-visualizer/internal/activity"
+	"github.com/derekdshaw/agent-work-visualizer/internal/analyzer"
+	"github.com/derekdshaw/agent-work-visualizer/internal/callgraph"
+	"github.com/derekdshaw/agent-work-visualizer/internal/lang/langtest"
+	"github.com/derekdshaw/agent-work-visualizer/internal/lang/python"
+	"github.com/derekdshaw/agent-work-visualizer/internal/session"
+	"github.com/derekdshaw/agent-work-visualizer/internal/transcript"
+	"github.com/derekdshaw/agent-work-visualizer/internal/transcript/transcripttest"
 )
 
 var testTime = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)

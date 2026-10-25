@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { EditEvent, Ev, Hunk } from './events.ts';
-import { countAt, fold, heatTarget, IDLE_AFTER, LOCK_T, MAX_TYPE, MIN_TYPE, nextEditTime, type NodeFlags, previousEditTime, typingDuration } from './reduce.ts';
+import { countAt, fold, heatTarget, IDLE_AFTER, LOCK_T, MAX_TYPE, MIN_TYPE, nextEditTime, type NodeFlags, previousEditTime, thinkingSpans, typingDuration, waitingSpans } from './reduce.ts';
 
 const base = { at: '2026-01-02T03:04:05Z', agent: 'main' };
 
@@ -163,4 +163,25 @@ test('edit jumps step through the edits', () => {
   assert.equal(previousEditTime(session, 16), 5);
   assert.equal(previousEditTime(session, 5.3), null);
   assert.equal(nextEditTime([], 0), null);
+});
+
+test('waitingSpans runs from the last event before each prompt to the prompt', () => {
+  const log: Ev[] = [
+    { ...base, t: 0, type: 'prompt', text: 'first' },
+    { ...base, t: 4, type: 'plan', text: 'done' },
+    { ...base, t: 34, type: 'prompt', text: 'next' },
+    { ...base, t: 36, type: 'plan', text: 'on it' },
+    { ...base, t: 36, type: 'prompt', text: 'queued at once' },
+  ];
+  assert.deepEqual(waitingSpans(log), [[4, 34]]);
+  assert.deepEqual(waitingSpans([]), []);
+});
+
+test('thinkingSpans runs from when a thought began to when it was written', () => {
+  const log: Ev[] = [
+    { ...base, t: 2, type: 'plan', text: 'look' },
+    { ...base, t: 9, type: 'think', text: 'check the parser', since: 2 },
+    { ...base, t: 9, type: 'think', text: 'instant', since: 9 },
+  ];
+  assert.deepEqual(thinkingSpans(log), [[2, 9]]);
 });

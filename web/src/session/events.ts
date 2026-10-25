@@ -56,7 +56,14 @@ export interface CheckEndEvent extends EventBase {
   ok: boolean;
 }
 
-export type Ev = TextEvent | ReadEvent | EditEvent | CheckEndEvent;
+// A thought is logged at t, when the agent finished it; since is when it began.
+export interface ThinkEvent extends EventBase {
+  type: 'think';
+  text: string;
+  since: number;
+}
+
+export type Ev = TextEvent | ReadEvent | EditEvent | CheckEndEvent | ThinkEvent;
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -119,6 +126,8 @@ export function parseRecord(value: unknown): Result<Header | Ev> {
     }
     case 'check_end':
       return { ok: true, value: { ...base, type, ok: value['ok'] === true } };
+    case 'think':
+      return { ok: true, value: { ...base, type, text: str(value, 'text'), since: typeof value['since'] === 'number' ? num(value, 'since') : base.t } };
   }
   return { ok: false, error: `unknown event type ${JSON.stringify(type)}` };
 }

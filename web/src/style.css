@@ -48,6 +48,7 @@ button,select{font:inherit;color:inherit}
 .row > span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow-wrap:anywhere}
 .row.active{color:var(--ink);padding:8px 12px;margin:0 -12px;border-left:2px solid var(--coral);background:rgba(255,90,126,.08)}
 .row .tag{font-weight:500}
+.t-think{color:var(--think)}
 .t-cyan{color:var(--cyan)}.t-coral{color:var(--coral)}.t-lime{color:var(--lime)}.t-mute{color:var(--mute)}
 .blast{display:flex;flex-direction:column;gap:8px;min-height:150px}
 .brow{display:flex;justify-content:space-between;gap:10px;padding:9px 12px;border:1px solid rgba(79,227,245,.18);border-radius:2px;font:400 12px var(--mono);color:var(--mute);transition:border-color .3s,background .3s,color .3s}
@@ -61,10 +62,15 @@ button,select{font:inherit;color:inherit}
 .stage:active{cursor:grabbing}
 #gl{position:absolute;inset:0;width:100%;height:100%;display:block}
 .vig{position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse at 50% 46%,transparent 52%,rgba(4,6,11,.88) 100%)}
+/* While a command runs the whole view takes the reticle's command color. */
+.runglow{position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .5s;box-shadow:inset 0 0 0 1px rgba(79,227,245,.35),inset 0 0 90px rgba(79,227,245,.2)}
+.stage.running .runglow{opacity:1;animation:runpulse 2.4s ease-in-out infinite alternate}
+@keyframes runpulse{from{opacity:.55}to{opacity:1}}
 .hud{position:absolute;pointer-events:none;font:500 11px var(--mono);letter-spacing:.14em;color:var(--mute)}
 .hud.tl{left:20px;top:18px;display:flex;flex-direction:column;gap:6px}
 .hud.tl b{color:var(--cyan);font-weight:500}
 .hud.tr{right:20px;top:18px;padding:8px 12px;border:1px solid rgba(255,90,126,.45);background:rgba(4,6,11,.75);border-radius:2px;color:var(--coral-soft);max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hud.run{right:20px;top:62px;padding:6px 12px;border:1px solid rgba(79,227,245,.45);background:rgba(4,6,11,.75);border-radius:2px;color:var(--cyan);max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .hud.bl{left:20px;bottom:18px;display:flex;flex-wrap:wrap;gap:6px 18px;max-width:calc(100% - 200px)}
 .hud.bl span{display:inline-flex;align-items:center;gap:8px}
 .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
@@ -123,6 +129,9 @@ button,select{font:inherit;color:inherit}
 .time{font:500 12px var(--mono);letter-spacing:.12em;color:var(--mute);min-width:112px}
 .track{position:relative;flex:1 1 240px;min-width:0;height:56px}
 .ticks{position:absolute;left:7px;right:7px;top:12px;height:18px;background-image:repeating-linear-gradient(90deg,rgba(79,227,245,.35) 0 2px,transparent 2px 10px)}
+.think{position:absolute;top:6px;height:30px;min-width:1px;background:color-mix(in srgb,var(--think) 22%,transparent);pointer-events:none}
+.track .tread{position:absolute;top:36px;padding:1px 6px;transform:translateX(-50%);background:var(--panel);border:1px solid var(--line);font:400 10px var(--mono);letter-spacing:.06em;color:var(--ink);white-space:nowrap;pointer-events:none;z-index:2}
+.wait{position:absolute;top:6px;height:30px;background:repeating-linear-gradient(135deg,rgba(143,160,188,.12) 0 3px,transparent 3px 7px);pointer-events:none}
 .burst{position:absolute;top:6px;height:30px;min-width:2px;background:rgba(255,90,126,.2);border-left:2px solid var(--coral);pointer-events:none}
 .track .tlab{position:absolute;top:38px;font:400 10px var(--mono);letter-spacing:.08em;color:var(--mute);white-space:nowrap;pointer-events:none}
 .track input{position:absolute;left:0;top:0;width:100%;height:44px;margin:0;background:transparent;-webkit-appearance:none;appearance:none;cursor:ew-resize}
@@ -163,4 +172,4 @@ body.resizing{user-select:none;cursor:col-resize}
   .hud.tr{max-width:62%}
   .hud.bl{max-width:100%;bottom:70px}
 }
-@media (prefers-reduced-motion:reduce){.cur{animation:none}.brow{transition:none}}
+@media (prefers-reduced-motion:reduce){.cur{animation:none}.brow{transition:none}.stage.running .runglow{animation:none}}

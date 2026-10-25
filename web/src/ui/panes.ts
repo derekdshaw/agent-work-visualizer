@@ -1,7 +1,14 @@
 import type { Ev, Result } from '../session/events.ts';
 import { addedChars, type EditView, LOCK_T, type ViewState, typingDuration } from '../session/reduce.ts';
 
+const clamp = (value: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, value));
+
 const LOG_ROWS = 7;
+// A thought is logged when it ends, at most the 30 s gap cap after it began,
+// so the stream looks this far ahead for one that has already begun.
+const THINK_LOOKAHEAD = 30;
+// The pointer readout names an edit within this many pixels of the pointer.
+const READOUT_SLOP = 8;
 const CODE_ROW_LIMIT = 800;
 const FILE_ROW_LIMIT = 5000;
 // The typed diff redraws in this many steps, so a long edit costs a bounded
@@ -56,6 +63,8 @@ export function describe(event: Ev, label: (id: string) => string): Row | null {
       return { tag: 'ASK', tone: 't-cyan', text: who + firstLine(event.text) };
     case 'plan':
       return { tag: 'PLAN', tone: 't-cyan', text: who + firstLine(event.text) };
+    case 'think':
+      return { tag: 'THINK', tone: 't-think', text: who + firstLine(event.text) };
     case 'step':
       return { tag: 'TOOL', tone: 't-mute', text: who + firstLine(event.text) };
     case 'agent':
@@ -102,27 +111,69 @@ export class Panes {
   private statusSig = '';
   private burstSig = '';
   private readonly reducedMotion: boolean;
+  // Each edit's place on the track, as shares of its width, for the readout.
+  private editMarks: Array<{ from: number; width: number; path: string }> = [];
 
   constructor(elements: PaneElements, reducedMotion: boolean) {
     this.e = elements;
     this.reducedMotion = reducedMotion;
+    // Bursts sit under the range input, so the readout finds the edit nearest
+    // the pointer instead of hovering a burst.
+    const readout = el('div', 'tread');
+    readout.hidden = true;
+    const track = elements.track;
+    track.appendChild(readout);
+    track.addEventListener('pointermove', (event) => {
+      const rect = track.getBoundingClientRect();
+      const width = rect.width - 14;
+      const x = event.clientX - rect.left - 7;
+      let best: { from: number; path: string } | null = null;
+      let bestDistance = READOUT_SLOP;
+      for (const mark of this.editMarks) {
+        const left = mark.from * width;
+        const right = left + Math.max(2, mark.width * width);
+        const distance = x < left ? left - x : x > right ? x - right : 0;
+        if (distance <= bestDistance) {
+          bestDistance = distance;
+          best = mark;
+        }
+      }
+      readout.hidden = best === null;
+      if (best) {
+        readout.textContent = best.path;
+        const half = readout.offsetWidth / 2;
+        readout.style.left = `${clamp(7 + best.from * width, half, rect.width - half)}px`;
+      }
+    });
+    track.addEventListener('pointerleave', () => {
+      readout.hidden = true;
+    });
   }
 
   renderLog(events: readonly Ev[], s: ViewState, label: (id: string) => string): void {
+    // A thought shows from when it began, before the event that logs it.
+    const early: Array<{ index: number; row: Row }> = [];
+    for (let j = s.count; j < events.length && events[j].t - s.t <= THINK_LOOKAHEAD; j++) {
+      const event = events[j];
+      const row = event.type === 'think' && event.since <= s.t ? describe(event, label) : null;
+      if (row) early.push({ index: j, row });
+    }
     const rows: Array<{ index: number; row: Row }> = [];
-    for (let i = s.count - 1; i >= 0 && rows.length < LOG_ROWS; i--) {
+    for (let i = s.count - 1; i >= 0 && rows.length + early.length < LOG_ROWS; i--) {
       const row = describe(events[i], label);
       if (row) rows.unshift({ index: i, row });
     }
+    rows.push(...early.slice(-LOG_ROWS));
     const active = s.edit && s.edit.progress < 1 ? s.edit.index : -1;
-    const sig = `${events.length > 0 ? events[0].at : ''}|${s.count}|${active}`;
+    const sig = `${events.length > 0 ? events[0].at : ''}|${s.count}|${active}|${early.map((item) => item.index).join(',')}`;
     if (sig === this.logSig) return;
     this.logSig = sig;
     this.e.log.textContent = '';
     if (!rows.length) this.e.log.appendChild(el('div', 'none', 'Waiting for agent activity.'));
     for (const { index, row } of rows) {
       const line = el('div', index === active ? 'row active' : 'row');
-      line.appendChild(el('span', 'ts', fmt(events[index].t)));
+      const event = events[index];
+      line.appendChild(el('span', 'ts', fmt(event.type === 'think' ? event.since : event.t)));
       const body = el('span');
       body.title = row.text;
       body.appendChild(el('b', `tag ${row.tone}`, row.tag));
@@ -319,14 +370,28 @@ export class Panes {
     }
   }
 
-  // renderBursts marks each edit on the scrubber track, labelled with its file.
-  renderBursts(events: readonly Ev[], total: number): void {
+  // renderBursts marks each edit on the scrubber track and shades the spans
+  // where the agent waited for the user or thought. Edits too close to label
+  // apart share the first one's label, with a count of the rest.
+  renderBursts(events: readonly Ev[], total: number, waits: ReadonlyArray<[number, number]>, thinks: ReadonlyArray<[number, number]>): void {
     const sig = `${events.length}|${events.length ? events[0].at : ''}|${Math.round(total)}`;
     if (sig === this.burstSig) return;
     this.burstSig = sig;
-    for (const old of this.e.track.querySelectorAll('.burst,.tlab')) old.remove();
+    for (const old of this.e.track.querySelectorAll('.burst,.tlab,.wait,.think')) old.remove();
+    this.editMarks = [];
     if (total <= 0) return;
-    let lastLabel = -1;
+    for (const [className, spans] of [['wait', waits], ['think', thinks]] as const) {
+      for (const [from, to] of spans) {
+        const band = el('div', className);
+        band.style.left = `calc(7px + (100% - 14px) * ${Math.min(1, from / total)})`;
+        band.style.width = `calc((100% - 14px) * ${Math.min(1, (to - from) / total)})`;
+        this.e.track.insertBefore(band, this.e.seek);
+      }
+    }
+    let label: { start: number; name: string; more: number; element: HTMLElement } | null = null;
+    const finish = () => {
+      if (label) label.element.textContent = label.more ? `${label.name} +${label.more}` : label.name;
+    };
     for (const event of events) {
       if (event.type !== 'edit') continue;
       const start = Math.min(1, event.t / total);
@@ -335,12 +400,17 @@ export class Panes {
       burst.style.left = `calc(7px + (100% - 14px) * ${start})`;
       burst.style.width = `calc((100% - 14px) * ${width})`;
       this.e.track.insertBefore(burst, this.e.seek);
-      if (lastLabel < 0 || start - lastLabel > 0.12) {
-        lastLabel = start;
-        const name = el('div', 'tlab', event.path.split('/').pop() ?? event.path);
-        name.style.left = `calc(7px + (100% - 14px) * ${start})`;
-        this.e.track.insertBefore(name, this.e.seek);
+      this.editMarks.push({ from: start, width, path: event.path });
+      if (label && start - label.start <= 0.12) {
+        label.more++;
+        continue;
       }
+      finish();
+      const element = el('div', 'tlab');
+      element.style.left = `calc(7px + (100% - 14px) * ${start})`;
+      this.e.track.insertBefore(element, this.e.seek);
+      label = { start, name: event.path.split('/').pop() ?? event.path, more: 0, element };
     }
+    finish();
   }
 }

@@ -95,6 +95,21 @@ export function nextEditTime(events: readonly Ev[], t: number): number | null {
   return null;
 }
 
+// waitingSpans returns the spans where the agent waited for the user: from
+// the last event before each prompt to the prompt.
+export function waitingSpans(events: readonly Ev[]): Array<[number, number]> {
+  const spans: Array<[number, number]> = [];
+  for (let i = 1; i < events.length; i++) {
+    if (events[i].type === 'prompt' && events[i].t > events[i - 1].t) spans.push([events[i - 1].t, events[i].t]);
+  }
+  return spans;
+}
+
+// thinkingSpans returns the spans where the agent thought before writing.
+export function thinkingSpans(events: readonly Ev[]): Array<[number, number]> {
+  return events.flatMap((event): Array<[number, number]> => (event.type === 'think' && event.since < event.t ? [[event.since, event.t]] : []));
+}
+
 function phaseOf(event: Ev): Phase | null {
   switch (event.type) {
     case 'read':
@@ -109,6 +124,7 @@ function phaseOf(event: Ev): Phase | null {
       return null;
     case 'prompt':
     case 'plan':
+    case 'think':
     case 'step':
     case 'agent':
       return 'plan';

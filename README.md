@@ -92,9 +92,10 @@ web/src/ui                 stream, blast radius, code pane, scrubber, panes, wor
   half a second after the diff starts, and nodes two hops out a second later.
   Edges light by the dimmer of their two ends, and pulses travel outward from
   the target. Every callable edited earlier in the session keeps a faint trace.
-- **Agent stream.** One row per event: requests, the agent's plans, reads,
-  edits, tool calls, subagents, and commands with their result. Subagent rows
-  carry the subagent's ID.
+- **Agent stream.** One row per event: requests, the agent's plans and
+  thinking, reads, edits, tool calls, subagents, and commands with their
+  result. Subagent rows carry the subagent's ID. Claude Code writes a thought
+  when it ends, so a THINK row shows from the time the thinking began.
 - **Code pane.** A tab opens for each file the agent edits and for the file
   of each node you click; tabs stay open until you close them with the × that
   appears on hover. The tab of the file that the current edit changed shows
@@ -102,10 +103,15 @@ web/src/ui                 stream, blast radius, code pane, scrubber, panes, wor
   is on disk now, scrolled to the selected callable. With Follow edit on, a new
   edit switches the pane to its diff. The status bar shows the latest command
   and the phase.
-- **Scrubber.** Coral bursts mark edits. Drag to any time; everything on the
-  page is computed from the events up to that time, so scrubbing and replay
-  need no other state. The speed button cycles 1×, 2×, 4×, 8×, and 16×
-  (Shift-click goes back down) and is remembered per browser. The previous and
+- **Scrubber.** Coral bursts mark edits, violet bands where the agent thought,
+  and hatched gray bands where it waited for your next prompt. Playback skips
+  the waits; set `skipWaiting` in `web/src/settings/playback.ts` to `false` to
+  play them. Edits too close to label apart share the first edit's file name
+  and a count, such as `load.ts +5`; point at a burst to see its file. Drag to
+  any time; everything on the page is computed from the events up to that
+  time, so scrubbing and replay need no other state. The speed button cycles
+  1×, 2×, 4×, 8×, and 16× (Shift-click goes back down) and is remembered per
+  browser. The previous and
   next buttons jump to the start of an edit, so its lock-on and diff play from
   the beginning. LIVE returns to the live edge.
 - **Session.** The title is Claude Code's session title. The picker replays an
@@ -224,6 +230,9 @@ Rust analysis recognizes:
 - simple, aliased, and grouped `use` declarations;
 - same-module calls, imported calls, associated functions, and `self`/`Self`
   method calls;
+- `crate::` paths and calls into the other Cargo packages of the tree, found by
+  the `[package]` name in each `Cargo.toml`, so calls between the crates of a
+  workspace resolve;
 - top-level `main` entrypoints.
 
 TypeScript analysis recognizes:
@@ -237,9 +246,6 @@ TypeScript analysis recognizes:
 
 Purple dispatch edges connect source-defined Java overrides to their resolved
 base methods.
-- `crate::` paths and calls into the other Cargo packages of the tree, found by
-  the `[package]` name in each `Cargo.toml`, so calls between the crates of a
-  workspace resolve;
 
 Repeated calls produce one edge with a count and distinct source lines. Calls
 are never resolved across languages. Dynamic dispatch, callbacks, reflection,

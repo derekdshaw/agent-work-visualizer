@@ -16,6 +16,10 @@
      status colors (ΔE >= 17). */
   --edge-calls: #ffc857;
   --edge-called-by: #ffffff;
+  /* The agent's thinking, in the stream and on the scrubber. Apart from the
+     status colors (ΔE >= 18) and from the gray of the hatched waits (ΔE 11.9),
+     which also differ in pattern. */
+  --think: #c792ea;
 }
 
 /* Add a scheme like this, then set <html data-color-scheme="name">:

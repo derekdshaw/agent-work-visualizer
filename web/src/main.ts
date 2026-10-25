@@ -3,7 +3,8 @@ import { runLayout } from './graph/layoutClient.ts';
 import { buildGraph, fetchGraph, type Graph, type GraphPayload, hopsFrom, parseGraph } from './graph/load.ts';
 import { connect, getJSON, getText, postJSON } from './net/live.ts';
 import { type Ev, type Header, isRecord, parseLine, parseLog, type Result } from './session/events.ts';
-import { fold, heatTarget, LOCK_T, nextEditTime, type Phase, previousEditTime, type ViewState } from './session/reduce.ts';
+import { fold, heatTarget, LOCK_T, nextEditTime, type Phase, previousEditTime, thinkingSpans, type ViewState, waitingSpans } from './session/reduce.ts';
+import { playback } from './settings/playback.ts';
 import { GroupLabels } from './ui/labels.ts';
 import { type BlastItem, fmt, Panes } from './ui/panes.ts';
 import { bindPanes } from './ui/split.ts';
@@ -54,6 +55,7 @@ const ui = {
   sessionTitle: byId('sessTitle', HTMLElement),
   sessionBranch: byId('sessBranch', HTMLElement),
   focus: byId('focus', HTMLElement),
+  runChip: byId('runChip', HTMLElement),
   cam: byId('cam', HTMLElement),
   card: byId('card', HTMLElement),
   cardName: byId('cardName', HTMLElement),
@@ -618,6 +620,13 @@ function lockLabel(s: ViewState, scanning: boolean): string {
 let last = performance.now();
 let tick = 0;
 
+// The spans where the agent waited for the user or thought, for the events
+// they came from.
+let waits: Array<[number, number]> = [];
+let thinks: Array<[number, number]> = [];
+let waitsOf: readonly Ev[] | null = null;
+let waitsCount = 0;
+
 function frame(now: number): void {
   // rAF timestamps can precede the last performance.now(); never run time backward.
   const dt = clamp((now - last) / 1000, 0, 0.05);
@@ -627,9 +636,19 @@ function frame(now: number): void {
   const events = current.events;
   const end = events.length ? events[events.length - 1].t : 0;
   total = replay ? Math.max(1, end + 2) : Math.max(1, liveEnd(current));
+  if (events !== waitsOf || events.length !== waitsCount) {
+    waitsOf = events;
+    waitsCount = events.length;
+    waits = waitingSpans(events);
+    thinks = thinkingSpans(events);
+  }
   if (!replay && followLive && !scrubbing) simT = liveEnd(current);
   else if (playing && !scrubbing) {
     simT += dt * speed;
+    if (playback.skipWaiting) {
+      const span = waits.find(([from, to]) => simT > from && simT < to);
+      if (span) simT = span[1];
+    }
     if (simT >= total) {
       simT = total;
       if (replay) playing = false;
@@ -705,7 +724,14 @@ function frame(now: number): void {
   if (showDiff) panes.renderCode(s.edit);
   else panes.renderFile({ path: activeFile, text: fileText, stamp: fileStamp, ...fileFocus });
   panes.renderStatus(s);
-  panes.renderBursts(events, total);
+  // A command runs from its start to its result, however long; the phase
+  // would go idle after IDLE_AFTER seconds without events.
+  const running = s.check?.state === 'running';
+  stage.classList.toggle('running', running);
+  ui.runChip.hidden = !running;
+  const runText = running && s.check ? `RUN · ${s.check.text}` : '';
+  if (ui.runChip.textContent !== runText) ui.runChip.textContent = runText;
+  panes.renderBursts(events, total, waits, thinks);
 
   // Title bar and scrubber.
   ui.sessionTitle.textContent = s.title || '—';

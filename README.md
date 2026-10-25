@@ -138,9 +138,11 @@ and each later line an event:
 {"t":6.0,"at":"…","type":"edit","agent":"main","path":"pkg/a.go","nodeIds":["pkg/a.go\u0000pkg.Run"],"hunks":[…]}
 ```
 
-Event types are `title`, `prompt`, `plan`, `step`, `agent`, `read`, `edit`,
-`check_start`, and `check_end`. Paths are relative to the root, and node IDs
-are the file and qualified name of a callable, which survive line shifts. `t`
+Event types are `title`, `prompt`, `plan`, `think`, `step`, `agent`, `read`,
+`edit`, `check_start`, and `check_end`. A `think` event is logged when the
+thought ends, and its `since` is the time on the timeline when it began.
+Paths are relative to the root, and node IDs are the file and qualified name
+of a callable, which survive line shifts. `t`
 counts seconds on the session timeline; an idle gap counts at most `gapCap`
 seconds, so an agent that waits an hour for you, or a session replayed from
 yesterday, does not leave the timeline empty. The page streams the log over
@@ -163,7 +165,12 @@ under ROOT.
 
 Each Read, Edit, or Write marks the callables that contain its lines. A Read
 marks the lines that the agent read, an Edit or Write the changed lines, and a
-Write that creates a file every line. The server moves line numbers forward
+Write that creates a file every line. A Bash command that succeeds counts as a
+read of the files it names under ROOT: `cat`, `nl`, `less`, `more`, and `bat`
+read the whole file, `head` and `tail` their lines, `sed -n` with line-number
+print scripts such as `'10,40p'` those lines, and `grep -n` or `rg -n` of named
+files the matching lines that they print. Globs, variables, directories, and
+other commands count as no read. The server moves line numbers forward
 through later edits of the same file, so an earlier read stays on the correct
 callable. Two seconds after the last edit to a supported source file, the server
 analyzes ROOT again and the page redraws the graph without moving the nodes it

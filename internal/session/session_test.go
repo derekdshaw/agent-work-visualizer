@@ -19,6 +19,7 @@ var start = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 func TestEventJSONFieldNames(t *testing.T) {
 	// web/src/session/events.ts reads these field names.
 	ok := false
+	since := 0.0
 	tests := map[string]struct {
 		value any
 		want  string
@@ -35,6 +36,8 @@ func TestEventJSONFieldNames(t *testing.T) {
 			`{"t":3,"at":"2026-01-02T03:04:05Z","type":"check_end","agent":"main","ok":false}`},
 		"text": {Event{T: 4, At: start, Type: "plan", Agent: "abc", Text: "Fix it"},
 			`{"t":4,"at":"2026-01-02T03:04:05Z","type":"plan","agent":"abc","text":"Fix it"}`},
+		"think": {Event{T: 5, At: start, Type: "think", Agent: "main", Text: "Hmm", Since: &since, Start: start},
+			`{"t":5,"at":"2026-01-02T03:04:05Z","type":"think","agent":"main","text":"Hmm","since":0}`},
 	}
 	for name, test := range tests {
 		data, err := json.Marshal(test.value)
@@ -62,6 +65,8 @@ func TestFromNote(t *testing.T) {
 		{note("check_start", "go test", false), Event{At: start, Agent: "main", Type: "check_start", Text: "go test"}, true},
 		{note("check_end", "", true), Event{At: start, Agent: "main", Type: "check_end", OK: &yes}, true},
 		{note("check_end", "", false), Event{At: start, Agent: "main", Type: "check_end", OK: &no}, true},
+		{transcript.Note{Time: start, Start: start.Add(-time.Second), Agent: "main", Kind: "think", Text: "Hmm"},
+			Event{At: start, Start: start.Add(-time.Second), Agent: "main", Type: "think", Text: "Hmm"}, true},
 		{note("unknown", "x", false), Event{}, false},
 	}
 	for _, test := range tests {
@@ -231,5 +236,30 @@ func TestNewNameSortsByTime(t *testing.T) {
 	first, second := NewName(start), NewName(start.Add(time.Second))
 	if !namePattern.MatchString(first) || first >= second {
 		t.Fatalf("NewName = %q, %q", first, second)
+	}
+}
+
+func TestLogPlacesThinkingSinceItsStart(t *testing.T) {
+	l := NewLog(filepath.Join(t.TempDir(), "sessions"), "20260102-030405-think", "/repo", "main")
+	at := func(seconds float64) time.Time { return start.Add(time.Duration(seconds * float64(time.Second))) }
+	l.Append([]Event{{At: at(0), Type: "prompt"}, {At: at(4), Type: "check_end"}})
+	// Thinking from 4 s to 12 s, written at 12 s; a long one counts at most GapCap.
+	l.Append([]Event{{At: at(12), Type: "think", Text: "plan the fix", Start: at(4)}, {At: at(12.5), Type: "check_start"}})
+	l.Append([]Event{{At: at(612.5), Type: "think", Text: "long", Start: at(12.5)}})
+	var thinks []Event
+	for _, line := range l.Lines(1) {
+		var event Event
+		if err := json.Unmarshal(line, &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.Type == "think" {
+			thinks = append(thinks, event)
+		}
+	}
+	if len(thinks) != 2 || thinks[0].T != 12 || thinks[0].Since == nil || *thinks[0].Since != 4 {
+		t.Fatalf("thinks = %+v, want the first at 12 since 4", thinks)
+	}
+	if thinks[1].T != 12.5+GapCap || *thinks[1].Since != 12.5 {
+		t.Fatalf("long think = T %v since %v, want T %v since 12.5", thinks[1].T, *thinks[1].Since, 12.5+GapCap)
 	}
 }

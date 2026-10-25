@@ -46,6 +46,8 @@ type Header struct {
 //   - "title": Text is the session title.
 //   - "prompt": Text is a user request.
 //   - "plan": Text is what the agent wrote.
+//   - "think": Text is what the agent thought, which it wrote down at T. Since
+//     is the time on the timeline when the thinking began.
 //   - "step": Text describes a tool call that is not a read, edit, or check.
 //   - "agent": Text describes a subagent that started.
 //   - "read": the agent read Path from Line. NodeIDs are the callables read.
@@ -68,6 +70,9 @@ type Event struct {
 	Hunks   []transcript.Hunk `json:"hunks,omitempty"`
 	Created bool              `json:"created,omitempty"`
 	OK      *bool             `json:"ok,omitempty"`
+	Since   *float64          `json:"since,omitempty"`
+	// Start is the wall time that Since comes from.
+	Start time.Time `json:"-"`
 }
 
 // FromNote returns the event for a transcript note, and false for a note kind
@@ -81,6 +86,9 @@ func FromNote(note transcript.Note) (Event, bool) {
 		event.Type = "prompt"
 	case "plan", "step", "check_start":
 		event.Type = note.Kind
+	case "think":
+		event.Type = "think"
+		event.Start = note.Start
 	case "subagent":
 		event.Type = "agent"
 	case "check_end":
@@ -184,6 +192,11 @@ func (l *Log) Append(events []Event) {
 			l.lastAt = event.At
 		}
 		event.T = l.lastT
+		if !event.Start.IsZero() {
+			// The timeline caps each idle gap, so the thinking spans at most GapCap.
+			since := math.Round(max(event.T-min(event.At.Sub(event.Start).Seconds(), GapCap), 0)*1000) / 1000
+			event.Since = &since
+		}
 		l.write(event)
 	}
 }

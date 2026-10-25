@@ -1,5 +1,6 @@
 // Package transcript follows Claude Code session transcripts and turns their
-// Read, Edit, and Write results into tool events.
+// Read, Edit, and Write results, and the file reads of their Bash commands,
+// into tool events.
 package transcript
 
 import (
@@ -45,6 +46,7 @@ type Watcher struct {
 	files     map[string]*transcriptFile
 	ignored   map[string]bool
 	tools     map[string]string
+	bashReads map[string][]bashRead
 	described map[string]bool
 	titles    map[string]string
 	notes     []Note
@@ -55,10 +57,13 @@ type Watcher struct {
 // title, "request" for a user prompt, "plan" for text that an agent writes,
 // "step" for a tool call other than Read, Edit, Write, and Bash, "subagent"
 // for the description of a subagent, "check_start" for a Bash call that an
-// agent starts, or "check_end" for its result, with OK false if it failed.
+// agent starts, "check_end" for its result, with OK false if it failed, or
+// "think" for the agent's thinking. A thought is written when it ends, so
+// Start is the time of the transcript line before it, when it began.
 // Agent is "main" or a subagent ID.
 type Note struct {
 	Time    time.Time `json:"time"`
+	Start   time.Time `json:"start,omitzero"`
 	Session string    `json:"session"`
 	Agent   string    `json:"agent"`
 	Kind    string    `json:"kind"`
@@ -72,6 +77,8 @@ const maxNoteText = 500
 type transcriptFile struct {
 	offset  int64
 	partial []byte
+	// last is the time of the latest user or assistant line.
+	last time.Time
 }
 
 type transcriptCandidate struct {
@@ -88,6 +95,7 @@ func NewWatcher(projects string, root string) *Watcher {
 		files:     make(map[string]*transcriptFile),
 		ignored:   make(map[string]bool),
 		tools:     make(map[string]string),
+		bashReads: make(map[string][]bashRead),
 		described: make(map[string]bool),
 		titles:    make(map[string]string),
 	}
@@ -387,8 +395,9 @@ func (w *Watcher) Poll() []Event {
 			log.Printf("Reading transcript %s: %v", path, err)
 			continue
 		}
+		file := w.files[path]
 		for _, line := range chunk {
-			events = append(events, w.parseLine(line)...)
+			events = append(events, w.parseLine(line, file)...)
 		}
 	}
 	return events
@@ -433,6 +442,7 @@ type transcriptLine struct {
 	Timestamp        time.Time `json:"timestamp"`
 	SessionID        string    `json:"sessionId"`
 	AgentID          string    `json:"agentId"`
+	Cwd              string    `json:"cwd"`
 	IsMeta           bool      `json:"isMeta"`
 	IsCompactSummary bool      `json:"isCompactSummary"`
 	AITitle          string    `json:"aiTitle"`
@@ -447,6 +457,7 @@ type transcriptBlock struct {
 	ID        string          `json:"id"`
 	Name      string          `json:"name"`
 	Text      string          `json:"text"`
+	Thinking  string          `json:"thinking"`
 	Input     json.RawMessage `json:"input"`
 	ToolUseID string          `json:"tool_use_id"`
 	IsError   bool            `json:"is_error"`
@@ -466,12 +477,18 @@ type toolResult struct {
 	} `json:"file"`
 }
 
-// parseLine returns the tool events of one transcript line and adds its task
+// parseLine returns the tool events of one line of file and adds its task
 // notes to w.notes.
-func (w *Watcher) parseLine(data []byte) []Event {
+func (w *Watcher) parseLine(data []byte, file *transcriptFile) []Event {
 	var line transcriptLine
 	if json.Unmarshal(data, &line) != nil {
 		return nil
+	}
+	// Attachment and other bookkeeping lines can carry the time of the thought
+	// that follows them, so only messages mark when the agent began thinking.
+	previous := file.last
+	if line.Type == "user" || line.Type == "assistant" {
+		file.last = line.Timestamp
 	}
 	agent := line.AgentID
 	if agent == "" {
@@ -509,6 +526,13 @@ func (w *Watcher) parseLine(data []byte) []Event {
 			if text := strings.TrimSpace(block.Text); text != "" {
 				note("plan", text)
 			}
+		case line.Type == "assistant" && block.Type == "thinking":
+			if text := strings.TrimSpace(block.Thinking); text != "" {
+				note("think", text)
+				if !previous.IsZero() && previous.Before(line.Timestamp) {
+					w.notes[len(w.notes)-1].Start = previous
+				}
+			}
 		case line.Type == "assistant" && block.Type == "tool_use":
 			switch block.Name {
 			// Their results become events, which name the file and callables.
@@ -517,6 +541,16 @@ func (w *Watcher) parseLine(data []byte) []Event {
 			case "Bash":
 				w.tools[block.ID] = block.Name
 				note("check_start", commandText(block))
+				var input struct {
+					Command string `json:"command"`
+				}
+				if json.Unmarshal(block.Input, &input) == nil {
+					cwd := line.Cwd
+					if cwd == "" {
+						cwd = w.root
+					}
+					w.bashReads[block.ID] = bashReads(input.Command, cwd)
+				}
 			default:
 				note("step", w.stepText(block))
 			}
@@ -525,6 +559,24 @@ func (w *Watcher) parseLine(data []byte) []Event {
 			delete(w.tools, block.ToolUseID)
 			if ok && tool == "Bash" {
 				w.notes = append(w.notes, Note{Time: line.Timestamp, Session: line.SessionID, Agent: agent, Kind: "check_end", OK: !block.IsError})
+				reads := w.bashReads[block.ToolUseID]
+				delete(w.bashReads, block.ToolUseID)
+				if block.IsError {
+					continue
+				}
+				var result struct {
+					Stdout string `json:"stdout"`
+				}
+				// A search needs its output; a result that is not an object leaves it empty.
+				_ = json.Unmarshal(line.ToolUseResult, &result)
+				for _, read := range reads {
+					if !Within(read.path, w.root) {
+						continue
+					}
+					if lines := read.lines(result.Stdout); len(lines) > 0 {
+						events = append(events, Event{Time: line.Timestamp, Session: line.SessionID, Agent: agent, Tool: "Read", Path: read.path, Lines: lines})
+					}
+				}
 				continue
 			}
 			if !ok || block.IsError {

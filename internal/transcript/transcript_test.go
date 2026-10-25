@@ -348,3 +348,37 @@ func assertReadLines(t *testing.T, events []Event, want ...int) {
 		t.Fatalf("read lines = %v, want %v", got, want)
 	}
 }
+
+func TestTranscriptWatcherNotesThinkingFromTheLineBefore(t *testing.T) {
+	projects := t.TempDir()
+	root := filepath.Join(t.TempDir(), "repo")
+	session := filepath.Join(projects, EncodeProjectPath(root), "s1.jsonl")
+	at := func(seconds int) time.Time { return transcripttest.Time.Add(time.Duration(seconds) * time.Second) }
+	thinking := func(seconds int, text string) map[string]any {
+		return map[string]any{"type": "assistant", "sessionId": "s1", "timestamp": at(seconds), "message": map[string]any{"content": []any{map[string]any{"type": "thinking", "thinking": text, "signature": "sig"}}}}
+	}
+	result := transcripttest.ToolResultLine("b1", map[string]any{"stdout": ""})
+	result["timestamp"] = at(3)
+	transcripttest.WriteTranscript(t, session,
+		transcripttest.SessionStart(root),
+		result,
+		// Claude Code writes attachment lines, the last one at the thought's own time.
+		map[string]any{"type": "attachment", "sessionId": "s1", "timestamp": at(4)},
+		map[string]any{"type": "attachment", "sessionId": "s1", "timestamp": at(11)},
+		thinking(11, "  Check the parser first.  "),
+		thinking(12, ""),
+	)
+	watcher := NewWatcher(projects, root)
+	watcher.Scan()
+	watcher.Poll()
+	var thinks []Note
+	for _, note := range watcher.TakeNotes() {
+		if note.Kind == "think" {
+			thinks = append(thinks, note)
+		}
+	}
+	want := []Note{{Time: at(11), Start: at(3), Session: "s1", Agent: "main", Kind: "think", Text: "Check the parser first."}}
+	if !reflect.DeepEqual(thinks, want) {
+		t.Fatalf("thinking notes = %+v, want %+v", thinks, want)
+	}
+}

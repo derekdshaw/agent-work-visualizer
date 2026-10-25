@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildGraph, FAR, type GraphPayload, hopsFrom, parseGraph } from './load.ts';
+import { buildGraph, FAR, type GraphPayload, HI_CALLS_LO, hopsFrom, LO_CALLS_HI, parseGraph } from './load.ts';
 
 function node(id: string, module = '.') {
   return { id, label: id, qualifiedName: id, module, kind: 'function', language: 'go', file: 'a.go', line: 1, endLine: 2 };
@@ -34,6 +34,11 @@ test('buildGraph indexes nodes and keeps undirected unique edges', () => {
   assert.deepEqual(graph.modules, ['.', 'pkg', 'other']);
   assert.deepEqual(graph.modOf, [0, 0, 1, 1, 2]);
   assert.equal(graph.index.get('d'), 3);
+});
+
+test('buildGraph keeps the call direction of each edge', () => {
+  assert.deepEqual(buildGraph(payload).calls, [LO_CALLS_HI | HI_CALLS_LO, LO_CALLS_HI, LO_CALLS_HI]);
+  assert.deepEqual(buildGraph({ ...payload, edges: [{ a: 'd', b: 'c', kind: 'call' }] }).calls, [HI_CALLS_LO]);
 });
 
 test('hopsFrom counts graph distance both ways along calls', () => {

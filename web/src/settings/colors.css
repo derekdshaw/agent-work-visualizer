@@ -11,6 +11,11 @@
    color, are what identify a package. */
 :root{
   --package-colors: #3987e5, #d95926, #199e70, #c98500, #9085e9, #008300;
+  /* Edges of the hovered or selected node: its calls, and its callers.
+     Apart from each other (ΔE 19.9) and from the coral, cyan, and lime
+     status colors (ΔE >= 17). */
+  --edge-calls: #ffc857;
+  --edge-called-by: #ffffff;
 }
 
 /* Add a scheme like this, then set <html data-color-scheme="name">:

@@ -15,6 +15,12 @@ export function readPalette(): THREE.Color[] {
     .map((item) => new THREE.Color(item));
 }
 
+// readColor returns a color variable of settings/colors.css, or fallback.
+export function readColor(name: string, fallback: number): THREE.Color {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value && CSS.supports('color', value) ? new THREE.Color(value) : new THREE.Color(fallback);
+}
+
 // packageColors assigns palette slots in sorted name order, so a package keeps
 // its color across reindexing while the set of packages stays the same.
 export function packageColors(modules: readonly string[], palette: readonly THREE.Color[]): THREE.Color[] {

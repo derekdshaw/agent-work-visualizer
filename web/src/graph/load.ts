@@ -32,7 +32,8 @@ export interface GraphPayload {
 }
 
 // Graph indexes a payload by node position. Edges are undirected pairs with
-// a < b, because the blast radius follows calls both ways.
+// a < b, because the blast radius follows calls both ways; calls keeps the
+// direction of each pair for drawing.
 export interface Graph {
   payload: GraphPayload;
   n: number;
@@ -40,11 +41,16 @@ export interface Graph {
   adj: number[][];
   deg: number[];
   edges: Array<[number, number]>;
+  // Per edge, LO_CALLS_HI and/or HI_CALLS_LO.
+  calls: number[];
   modules: string[];
   modOf: number[];
   files: string[];
   fileOf: number[];
 }
+
+export const LO_CALLS_HI = 1;
+export const HI_CALLS_LO = 2;
 
 // FAR is the hop count of a node that the target does not reach.
 export const FAR = 99;
@@ -102,7 +108,8 @@ export function buildGraph(payload: GraphPayload): Graph {
   payload.nodes.forEach((node, i) => index.set(node.id, i));
   const adj: number[][] = Array.from({ length: n }, () => []);
   const edges: Array<[number, number]> = [];
-  const seen = new Set<number>();
+  const calls: number[] = [];
+  const edgeOf = new Map<number, number>();
   for (const edge of payload.edges) {
     const a = index.get(edge.a);
     const b = index.get(edge.b);
@@ -110,9 +117,15 @@ export function buildGraph(payload: GraphPayload): Graph {
     const lo = Math.min(a, b);
     const hi = Math.max(a, b);
     const key = lo * n + hi;
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const bit = a === lo ? LO_CALLS_HI : HI_CALLS_LO;
+    const k = edgeOf.get(key);
+    if (k !== undefined) {
+      calls[k] |= bit;
+      continue;
+    }
+    edgeOf.set(key, edges.length);
     edges.push([lo, hi]);
+    calls.push(bit);
     adj[lo].push(hi);
     adj[hi].push(lo);
   }
@@ -137,7 +150,7 @@ export function buildGraph(payload: GraphPayload): Graph {
     fileOf.push(f);
     return m;
   });
-  return { payload, n, index, adj, deg: adj.map((list) => list.length), edges, modules, modOf, files, fileOf };
+  return { payload, n, index, adj, deg: adj.map((list) => list.length), edges, calls, modules, modOf, files, fileOf };
 }
 
 // hopsFrom returns the graph distance from node s to every node, FAR for a

@@ -1,0 +1,22 @@
+Third-party notices
+===================
+
+three.js 0.186.1
+Copyright (c) 2010-2026 three.js authors
+Licensed under the MIT License.
+https://github.com/mrdoob/three.js
+
+Tree-sitter Go bindings 0.25.0
+Copyright (c) 2024 Tree-sitter contributors
+Licensed under the MIT License.
+https://github.com/tree-sitter/go-tree-sitter
+
+Tree-sitter Go grammar 0.25.0
+Copyright (c) 2014 Max Brunsfeld
+Licensed under the MIT License.
+https://github.com/tree-sitter/tree-sitter-go
+
+Tree-sitter Python grammar 0.25.0
+Copyright (c) 2016 Max Brunsfeld
+Licensed under the MIT License.
+https://github.com/tree-sitter/tree-sitter-python

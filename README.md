@@ -230,14 +230,17 @@ TypeScript analysis recognizes:
 
 Purple dispatch edges connect source-defined Java overrides to their resolved
 base methods.
+- `crate::` paths and calls into the other Cargo packages of the tree, found by
+  the `[package]` name in each `Cargo.toml`, so calls between the crates of a
+  workspace resolve;
 
 Repeated calls produce one edge with a count and distinct source lines. Calls
 are never resolved across languages. Dynamic dispatch, callbacks, reflection,
 monkeypatching, dependency injection, calls into external packages, and
 ambiguous Java overloads remain explicitly unresolved. Java analysis does not
 read Maven, Gradle, JDK, bytecode, or classpath metadata. Rust analysis does not
-expand macros or perform type inference. TypeScript analysis does not use a
-`tsconfig.json` or TypeScript type checker. Go analysis does not apply build
+follow `pub use` re-exports, expand macros, or perform type inference.
+TypeScript analysis does not use a `tsconfig.json` or TypeScript type checker. Go analysis does not apply build
 constraints or perform type inference, so calls through interface or variable
 values remain unresolved.
 

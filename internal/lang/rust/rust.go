@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -43,6 +44,11 @@ func (Language) Analyze(root string, files []string) (*callgraph.Graph, error) {
 		root:      root,
 		nodesByID: make(map[string]*callgraph.Function),
 		files:     make(map[string]*rustFile),
+		crates:    make(map[string]string),
+		crateDirs: make(map[string]*rustCrate),
+	}
+	for _, path := range files {
+		a.crateOf(filepath.Dir(path))
 	}
 	if err := langutil.EachFile(root, files, a.analyzeRustFile); err != nil {
 		return nil, err
@@ -57,11 +63,61 @@ type analysis struct {
 	nodesByID map[string]*callgraph.Function
 	files     map[string]*rustFile
 	calls     []rustCall
+	// crates maps the identifier of each Cargo package in the tree to its
+	// module prefix, and crateDirs each directory to its package, or nil.
+	crates    map[string]string
+	crateDirs map[string]*rustCrate
+}
+
+// rustCrate is a Cargo package. Its source files are named from the tree
+// root, so prefix is the module of its src directory: "" for a package at the
+// root, "crates.engraph-retrieve.src" for crates/engraph-retrieve.
+type rustCrate struct {
+	srcDir string
+	prefix string
 }
 
 type rustFile struct {
-	module  string
+	module string
+	// crate is the module prefix of the file's package, which "crate::" names.
+	crate   string
+	crates  map[string]string
 	imports map[string]string
+}
+
+var cargoPackageName = regexp.MustCompile(`(?m)^\s*name\s*=\s*["']([^"']+)["']`)
+
+// crateOf returns the Cargo package whose directory is dir or its nearest
+// ancestor under the root, and records it in a.crates.
+func (a *analysis) crateOf(dir string) *rustCrate {
+	if crate, seen := a.crateDirs[dir]; seen {
+		return crate
+	}
+	var crate *rustCrate
+	if manifest, err := os.ReadFile(filepath.Join(dir, "Cargo.toml")); err == nil {
+		// The name of the [package] table, not of a later table.
+		if _, rest, found := strings.Cut(string(manifest), "[package]"); found {
+			if next := strings.Index(rest, "\n["); next >= 0 {
+				rest = rest[:next]
+			}
+			if match := cargoPackageName.FindStringSubmatch(rest); match != nil {
+				relative, _ := filepath.Rel(a.root, filepath.Join(dir, "src"))
+				srcDir := filepath.ToSlash(relative)
+				// Like rustModuleName, which drops the src/ of a package at the root.
+				prefix := strings.ReplaceAll(srcDir, "/", ".")
+				if srcDir == "src" {
+					prefix = ""
+				}
+				crate = &rustCrate{srcDir: srcDir, prefix: prefix}
+				a.crates[strings.ReplaceAll(match[1], "-", "_")] = crate.prefix
+			}
+		}
+	}
+	if crate == nil && dir != a.root && strings.HasPrefix(dir, a.root) {
+		crate = a.crateOf(filepath.Dir(dir))
+	}
+	a.crateDirs[dir] = crate
+	return crate
 }
 
 type rustCall struct {
@@ -88,7 +144,14 @@ func (a *analysis) analyzeRustFile(path string) error {
 		return fmt.Errorf("relative path for %s: %w", path, err)
 	}
 	relative = filepath.ToSlash(relative)
-	state := &rustFile{module: rustModuleName(relative), imports: make(map[string]string)}
+	state := &rustFile{module: rustModuleName(relative), crates: a.crates, imports: make(map[string]string)}
+	if crate := a.crateOf(filepath.Dir(path)); crate != nil {
+		state.crate = crate.prefix
+		// main.rs and lib.rs are the root module of their package.
+		if relative == crate.srcDir+"/main.rs" || relative == crate.srcDir+"/lib.rs" {
+			state.module = crate.prefix
+		}
+	}
 	a.files[relative] = state
 	a.graph.Files = append(a.graph.Files, callgraph.File{Path: relative, Module: state.module, Language: "rust"})
 	a.graph.Stats.Files++
@@ -288,16 +351,23 @@ func collectRustImport(value string, state *rustFile) {
 	if len(parts) == 2 {
 		alias = strings.TrimSpace(parts[1])
 	}
-	state.imports[alias] = resolveRustPath(state.module, target)
+	state.imports[alias] = resolveRustPath(state, target)
 }
 
-func resolveRustPath(module string, path string) string {
+// resolveRustPath returns the qualified name of a path in the file of state.
+// "crate" and the name of a package in the tree resolve to their prefix.
+func resolveRustPath(state *rustFile, path string) string {
+	module := state.module
 	path = strings.ReplaceAll(strings.TrimSpace(path), "::", ".")
+	root, rest, _ := strings.Cut(path, ".")
+	if prefix, known := state.crates[root]; known {
+		return langutil.Qualified(prefix, rest)
+	}
 	switch {
 	case path == "crate":
-		return ""
+		return state.crate
 	case strings.HasPrefix(path, "crate."):
-		return strings.TrimPrefix(path, "crate.")
+		return langutil.Qualified(state.crate, strings.TrimPrefix(path, "crate."))
 	case path == "self":
 		return module
 	case strings.HasPrefix(path, "self."):
@@ -396,11 +466,8 @@ func (a *analysis) resolveRustCall(call rustCall, byQualified map[string]*callgr
 	if imported := state.imports[root]; imported != "" {
 		return byQualified[langutil.Qualified(imported, suffix)]
 	}
-	if strings.HasPrefix(expression, "crate.") {
-		return byQualified[strings.TrimPrefix(expression, "crate.")]
-	}
-	if strings.HasPrefix(expression, "super.") {
-		return byQualified[resolveRustPath(call.module, strings.Replace(expression, ".", "::", 1))]
+	if _, known := state.crates[root]; known || root == "crate" || root == "super" {
+		return byQualified[resolveRustPath(&rustFile{module: call.module, crate: state.crate, crates: state.crates}, expression)]
 	}
 	if target := byQualified[langutil.Qualified(call.module, expression)]; target != nil {
 		return target

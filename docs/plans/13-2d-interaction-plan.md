@@ -30,10 +30,39 @@ Plan 12.
 - The board draws a curved line from the chip to each callee and to each
   caller. The lines to callees are `--edge-calls`. The lines to callers are
   `--edge-called-by`. The lines are in an SVG layer over the board.
-- The callees and the callers get outlines in the same colors. All other
-  chips have 28% opacity.
+- The chip under the pointer gets a 2 px `--ink` outline. The callees and
+  the callers get 1.5 px outlines in the colors of their lines. All
+  outlines have a 1 px offset. All other chips have 28% opacity.
 - When the pointer leaves the chip, the lines and the fade go away.
 - The board does not draw lines at other times.
+
+### Tooltip
+
+| Part | Value |
+| --- | --- |
+| Position | `position: fixed`. 14 px to the right of the pointer and 18 px below it. |
+| Near the right edge | Move it left, so that it stays 8 px inside the window. |
+| Near the bottom edge | If it does not fit below the pointer, put it 10 px above the pointer. |
+| Pointer events | None, so it never takes the pointer from the board. |
+| Size | At most 320 px wide. A long name breaks at any character. |
+| Box | Padding 8 px × 10 px, fill `--panel` at 97%, 1 px border `--cyan` at 30%, corner radius 4 px |
+| Text | `--mono`, 11 px, line height 1.55, `--mute`. The name is on the first line, in `--ink`, 500. The count of calls is in `--edge-calls`; the count of callers is in `--edge-called-by`. |
+| Layer | Over the board, the links, and the floating bar |
+
+### Links
+
+- Each line is a quadratic curve from the center of the chip to the center
+  of the other chip.
+- The control point is on the perpendicular through the midpoint of the
+  two centers, at a distance of `min(60, 0.2 × length)` px from it. Each
+  curve starts at the chip under the pointer, so all curves bend to the same
+  side of their direction.
+- If a callable is both a callee and a caller, draw only the callee line.
+  Give its chip the callee outline.
+- The stroke is 1.5 px, at 85% of its color, with no fill.
+- The SVG layer covers the full board, has no pointer events, and is under
+  the reticle. Draw it again only when the chip under the pointer changes
+  or the board size changes.
 
 ## Task 2: Clicks
 
@@ -50,6 +79,12 @@ Plan 12.
 - While the viewer holds the highlight, a bar floats at the lower right of
   the board: `Showing <path>` and a FOLLOW AGENT button. The bar floats over
   the board, so it does not change the size of the board.
+- The bar: `position: absolute`, 12 px from the right and bottom edges of
+  the board, at most the board width less 24 px. Padding 6 px, and 12 px on
+  the left. Fill `--panel` at 96%, 1 px border `--cyan` at 30%, corner
+  radius 4 px, shadow `0 6px 24px` black at 50%. Text `--mono` 11 px. The
+  path is `--ink` 500, one line, with an ellipsis at the end. The button
+  has the look of the transport buttons.
 - The agent's reticle, heat, and blast outlines still show while the viewer
   holds the highlight. They are dim if they are in a dim package.
 - A selection made in one view stays when the viewer changes the view,
@@ -75,7 +110,8 @@ board too slow to use with a keyboard.
   does.
 - Only one element in each group has `tabindex="0"`. The others have
   `tabindex="-1"` (a roving tab index).
-- The focused element has a visible cyan outline.
+- The focused element has a 2 px `--cyan` outline. The offset is 2 px on a
+  card and 1 px on a chip.
 - A screen reader reads a chip as its display name, file, and line. It reads
   a card as "Highlight" and its path.
 
@@ -108,7 +144,9 @@ This is the full check of the 2D view. All steps must pass.
 3. Select `2D` in the title bar. The 2D board shows with the left column of
    plan 11. Reload. The 2D view is still selected.
 4. Point at a chip. The tooltip, the lines, the outlines, and the fade show.
-   Move the pointer away. They go away.
+   Move the pointer away. They go away. Point at a chip near the right edge
+   and at a chip near the bottom edge of the board. The tooltip stays fully
+   in the window and does not cover the chip.
 5. Click a chip. The code pane opens its file, scrolled to the callable,
    with the focus color on its lines.
 6. Click a file card outside its chips. The file and its package stand out.

@@ -43,8 +43,87 @@ coral of an edit. The chip background is the package color at 8% opacity.
 The cards are absolute boxes at the rectangles of plan 09. The board fills
 its host. The page does not scroll.
 
-Use the font stack of the page (`--mono` in `web/src/style.css`). Do not
-load a web font. Measure the chip widths after `document.fonts.ready`.
+Use the font stacks of the page (`--ui` and `--mono` in
+`web/src/style.css`). Do not load a web font. Measure the chip widths after
+`document.fonts.ready`.
+
+### Dimensions
+
+The values marked † come from `web/src/view2d/dims.ts` (plan 09). Set them
+from that module as CSS variables on the board. Do not type them again in
+the CSS. `k` is the chip scale of Task 2. The values marked `× k` change
+with the scale. The other values do not.
+
+Each package card sets `--pc` to its color as an `r, g, b` triple. The CSS
+uses `rgba(var(--pc), a)` for the package color at opacity `a`. For a gray
+at an opacity, use `color-mix(in srgb, var(--mute) N%, transparent)`.
+
+**Package card**
+
+| Part | Value |
+| --- | --- |
+| Border | 1 px, package color at 28% |
+| Top border | 2 px, package color at 80% |
+| Corner radius | 8 px |
+| Fill | package color at 4% |
+| Padding | 8 px |
+| Gap between the header and the file cards | 6 px |
+| Header: last part of the path | `--ui`, 600, 13 px, capitals, letter spacing 0.12 em, package color |
+| Header: rest of the path | `--mono`, 400, 11 px, `--mute` |
+| Header: counts | `--mono`, 400, 10 px, `--mute`, tabular numbers, at the right end |
+| Narrower than 240 px | Hide the rest of the path and the counts (a container query) |
+
+**File card**
+
+| Part | Value |
+| --- | --- |
+| Border | 1 px, `--mute` at 16% |
+| Corner radius | 6 px |
+| Fill | `--void` at 55% |
+| Padding | 6 px top, 8 px sides, 7 px bottom |
+| Gap between the header and the chips | 5 px |
+| Header: file label | `--mono`, 500, 11 px, `--ink` at 85% |
+| Header: counts | `--mono`, 10 px, tabular numbers, at the right end. Reads in `--cyan`, edits in `--coral`, 8 px apart |
+| Header: `scroll` after the label | `--mute`, 400 |
+| Chip area padding | 2 px |
+| Narrower than 170 px | Hide the counts (a container query) |
+
+**Chip (named)**
+
+| Part | Value |
+| --- | --- |
+| Height | `CHIP_H` † × k |
+| Gap between chips | `CHIP_GAP` † × k |
+| Side padding | 9 px × k |
+| Corner radius | 5 px |
+| Border | 1 px, `--mute` at 22% |
+| Fill | package color at 8% |
+| Text | `--mono`, 400, 11 px × k, line height 22 px × k, `--ink` at 78%, one line, ellipsis |
+| Type part of a method (`HashIndex.`) | `--mute` |
+| Inline test | Dashed border, fill package color at 3% |
+| Pointer on the chip, or focus | Text `--ink`, fill package color at 24% |
+
+**Square** (a callable that has no name)
+
+| Part | Value |
+| --- | --- |
+| Size | The current value of `SQUARE_SIZES` (plan 09) for that file card |
+| Gap | 5 px at 13 px squares, 3 px at smaller squares |
+| Corner radius | 3 px |
+| Border, fill | The same as a named chip |
+| Text | None. The tooltip of plan 13 gives the name. |
+
+**State marks** (Task 3). They apply to named chips and to squares.
+
+| Mark | Named chip | Square |
+| --- | --- | --- |
+| Read once | A 2 px cyan line at the bottom, 2 px from the edge, 5 px in from each side, at 55% | The same line, 1 px from the bottom, 2 px in from each side |
+| Read two or more times | The same line at 100% | The same line at 100% |
+| Edited | A 3 px coral bar on the inside of the left edge. Text `--ink` | The same bar |
+| Target | Fill package color at 45%, border `--ink` at 50%, text `--ink` | Not possible: the target always has a name |
+
+The state marks do not change the size of a chip. Use `box-shadow`,
+`outline`, and pseudo-elements, not borders or padding.
 
 ### Procedure
 
@@ -97,13 +176,9 @@ load a web font. Measure the chip widths after `document.fonts.ready`.
 
 ### Result
 
-`Graph2D.frame` gives the board the `ViewState`. The board shows:
-
-- A cyan line under a chip that the agent read. The line is brighter after
-  two reads.
-- A coral bar at the left edge of a chip that the agent edited.
-- A brighter fill on the target chip.
-- The read and edit counts in each file header.
+`Graph2D.frame` gives the board the `ViewState`. The board shows the state
+marks of Task 1 (read line, edit bar, target fill) and the read and edit
+counts in each file header.
 
 A move of the playhead back in time removes the marks of the later events,
 because all of this comes from `fold`.
@@ -123,16 +198,21 @@ All steps must pass.
    packages are directories, for example `internal/server`.
 4. Each package card holds its files. Each file card shows names, and
    squares if the names do not all fit. No card is smaller than 130 × 62 px.
-5. The page does not scroll. No part of the board is cut off at the bottom.
-6. Replay the session. The cards of the files that the agent read get cyan
+   No name is cut off at the bottom of its card.
+5. In the browser developer tools, measure a chip at the current scale `k`
+   (the `--k` variable on the board). Its height is 24 × k px. Measure a
+   13 px square, a file card padding, and a package card border. They match
+   the Dimensions tables.
+6. The page does not scroll. No part of the board is cut off at the bottom.
+7. Replay the session. The cards of the files that the agent read get cyan
    lines and read counts. The edited callable gets a coral bar.
-7. Drag the playhead back to the start. The marks go away.
-8. Make the window smaller and larger. The board fills the space again.
-9. Open a working tree with more than 800 NODES. Most file cards show
-   squares. A few file cards may scroll. The text of the note matches the
-   board.
-10. In the browser developer tools, the network panel shows no requests to
+8. Drag the playhead back to the start. The marks go away.
+9. Make the window smaller and larger. The board fills the space again.
+10. Open a working tree with more than 800 NODES. Most file cards show
+    squares. A few file cards may scroll. The text of the note matches the
+    board.
+11. In the browser developer tools, the network panel shows no requests to
     other hosts.
-11. In the performance panel, record 5 s of playback on the large working
+12. In the performance panel, record 5 s of playback on the large working
     tree. No frame takes more than 16 ms.
-12. Open `/?view=3d`. The 3D view is the same as before this plan.
+13. Open `/?view=3d`. The 3D view is the same as before this plan.

@@ -28,9 +28,11 @@ Nothing. See "Other plans" at the end for the changes that apply if plans
   the speed set the state when the page opens. The buttons on the page
   still change the state for that page. A button does not change the
   settings.
-- **The speed is not stored in the browser.** The page removes the
-  `awv.speed` key. The speed button changes the speed only for that page.
-  The settings give the speed at startup.
+- **The last speed overrides the setting.** The speed button keeps the last
+  speed in `localStorage` (`awv.speed`), as now. At startup, the page uses
+  `awv.speed` if it has a valid value. Else it uses the `speed` setting.
+  When the viewer saves a new `speed` in the dialog, the page removes
+  `awv.speed`, so the new setting applies at the next startup.
 - **Reduced motion wins.** If the operating system asks for reduced
   motion, auto-rotate is off at startup, as now.
 - **The other settings apply at once.** Skip waits and the color scheme
@@ -144,8 +146,11 @@ In `web/src/main.ts`:
 - The page loads the settings before it sets the startup state.
 - `autoRotate` starts as `settings.autoRotate && !reducedMotion`.
 - `followCamera` (the Follow edit button) starts as `settings.followEdit`.
-- `speed` starts as `settings.speed`. Remove `SPEED_KEY` and the
-  `localStorage` read and write of `awv.speed`.
+- `speed` starts as the value of `awv.speed` if it is in `SPEEDS`, else
+  as `settings.speed`. Keep `SPEED_KEY` and the write of `awv.speed` in the
+  speed button handler, as now.
+- After a save that changes `speed`, remove `awv.speed` from
+  `localStorage`. Read and write `localStorage` in try/catch, as now.
 - `playback.skipWaiting` (`web/src/settings/playback.ts`) is set from
   `settings.skipWaiting`. Change the comment at the top of that file: the
   settings now set the value.
@@ -185,8 +190,10 @@ In `web/src/main.ts`:
   | List: 1×, 2×, 4×, 8×, 16× | `speed` |
 
   A note under the second group says: "These apply the next time the page
-  opens." If the operating system asks for reduced motion, a note next to
-  auto-rotate says that auto-rotate stays off.
+  opens." A note next to the speed list says: "The speed button keeps your
+  last speed. Saving a new speed here clears it." If the operating system
+  asks for reduced motion, a note next to auto-rotate says that auto-rotate
+  stays off.
 
 - **Save** sends the settings to the server.
   - If the server accepts them, the dialog closes. The page applies
@@ -265,7 +272,8 @@ All steps must pass.
    `npm --prefix web run typecheck` pass.
 2. Move `~/.config/agent-work-visualizer/settings.json` away, if it
    exists. Start the server on this repository with the test session.
-   Open the page.
+   Open the page. In the developer tools, remove `awv.speed` from
+   `localStorage`, if it exists. Reload.
 3. The page opens as before this plan: auto-rotate on, Follow edit on,
    speed 1×. The settings file does not exist.
 4. Click SETTINGS. The dialog shows the defaults. Press Esc. The dialog
@@ -274,33 +282,37 @@ All steps must pass.
    to 4×. Click Save. The page state does not change. The settings file
    exists and holds the new values.
 6. Reload. Auto-rotate is off, Follow edit is off, and the speed is 4×.
-7. Click the speed button to 8×. Reload. The speed is 4× again.
-8. Open the page in a second browser. It opens with the same state as in
-   step 6.
-9. Pick the test session. Turn off skip waits in the dialog and click Save.
-   Play the session over a wait. The playhead moves through the wait at the
-   playback speed. Turn skip waits on again. The playhead jumps over the
-   wait.
-10. Pick the second color scheme and click Save. The node and ring colors
+7. Click the speed button to 8×. Reload. The speed is 8×, because the last
+   speed overrides the setting.
+8. Open the page in a second browser that has no `awv.speed`. It opens
+   with auto-rotate off, Follow edit off, and the speed at 4×.
+9. In the first browser, set the speed to 2× in the dialog and click Save.
+   Reload. The speed is 2×. In the developer tools, `localStorage` has no
+   `awv.speed` key until you click the speed button again.
+10. Pick the test session. Turn off skip waits in the dialog and click Save.
+    Play the session over a wait. The playhead moves through the wait at the
+    playback speed. Turn skip waits on again. The playhead jumps over the
+    wait.
+11. Pick the second color scheme and click Save. The node and ring colors
     change at once. No node moves. The camera does not move. Reload. The
     second scheme is still active.
-11. Edit the settings file by hand: set `"colorScheme": "nosuch"`. Reload.
+12. Edit the settings file by hand: set `"colorScheme": "nosuch"`. Reload.
     The page uses the default scheme.
-12. Edit the settings file by hand: set `"speed": 3`. Reload. The speed is
-    1×, and the other settings keep their values.
-13. Make the settings directory read-only. Change a setting and click Save.
+13. Edit the settings file by hand: set `"speed": 3`. Reload. Open the
+    dialog. The speed shows 1×, and the other settings keep their values.
+14. Make the settings directory read-only. Change a setting and click Save.
     The dialog stays open and shows the error. Make the directory writable
     again.
-14. Click Reset in the dialog. The controls show the defaults. Click
+15. Click Reset in the dialog. The controls show the defaults. Click
     Cancel. Open the dialog again. The saved values show.
-15. Use only the keyboard: Tab to SETTINGS, Enter, change each control,
+16. Use only the keyboard: Tab to SETTINGS, Enter, change each control,
     Tab to Save, Enter. The focus goes back to SETTINGS.
-16. Turn on reduced motion in the operating system. Set auto-rotate on in
+17. Turn on reduced motion in the operating system. Set auto-rotate on in
     the settings. Reload. Auto-rotate is off. The dialog shows the note
     next to auto-rotate.
-17. Make the window 400 px wide. Open the dialog. All controls show with
+18. Make the window 400 px wide. Open the dialog. All controls show with
     no horizontal scroll.
-18. Run
+19. Run
     `curl -s -X POST -H 'Origin: http://example.com' -d '{}' http://127.0.0.1:7777/api/settings`.
     The server returns `cross-origin request`.
 

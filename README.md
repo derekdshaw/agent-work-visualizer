@@ -1,11 +1,22 @@
 # Agent Work Visualizer
 
-`agent-work-visualizer` is a local web server that shows a Claude Code agent
-working on a code base in real time. The page draws the call graph of a
-Python, Go, Java, Rust, or TypeScript tree in 3D, locks a reticle onto the
-callable that the agent edits, lights its dependents hop by hop, and types the
-edit's diff into a code pane. Every session is recorded as a JSONL event log
-that replays with a scrubber. The server and the page need no network access.
+Agent Work Visualizer is a local web server. It shows the work that a Claude Code agent does on a code base, while the agent does that work.
+
+What it does
+
+- It reads the source files of a working tree and makes a call graph. It can read Python, Go, Java, Rust, and TypeScript.
+- It shows the call graph in 3D on a web page.
+- It reads the session transcripts that Claude Code writes, and finds each tool call of the agent.
+- When the agent reads or edits a function, the page identifies that function. It also shows the functions that the change can have an effect on.
+- The code pane shows each file that the agent edits, and shows the change as it occurs.
+- It records each session in a log. You can use the timeline to show a session again.
+- The server and the page do not use the network.
+
+What you can use it for
+
+- To monitor an agent during its work. You can hold the next tool call of the agent until you let it continue. This needs a Claude Code hook.
+- To examine a session after it is completed, and to find where a problem started.
+- To show other persons how an agent does its work on a code base.
 
 ## Build and run
 

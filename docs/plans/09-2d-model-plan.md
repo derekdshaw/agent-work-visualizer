@@ -101,22 +101,37 @@ agent adds a function.
   `minArea` px², if `rect` is large enough for all of the minimums.
 - `weigh(tree, chipWidth)`: the weight of each file and package.
   `chipWidth(callable)` is the width of a named chip at scale 1. The content
-  area of a file is the sum of `(chipWidth + 5) × 29` for its callables,
-  times 1.3. With `s` the square root of the content area, the file weight
-  is `(s + 22) × (s + 44)`. With `s` the square root of the sum of its file
-  weights, the package weight is `(s + 26) × (s + 52)`.
+  area of a file is the sum of `(chipWidth + CHIP_GAP) × CHIP_PITCH` for
+  its callables, times `CONTENT_SLACK`. With `s` the square root of the
+  content area, the file weight is `(s + FILE_FRAME_X) × (s + FILE_FRAME_Y)`.
+  With `s` the square root of the sum of its file weights, the package
+  weight is `(s + PKG_FRAME_X) × (s + PKG_FRAME_Y)`.
 - `layoutKey(tree, width, height)`: a string of the file paths and the
   board size.
 
-The constants:
+Put the constants in `web/src/view2d/dims.ts`. Plan 10 uses the same
+module for the board CSS, so the weights and the drawn cards agree.
 
-| Name | Value |
-| --- | --- |
-| Board padding | 12 px |
-| Gap between package cards | 10 px |
-| Gap between file cards | 6 px |
-| Minimum package card | 240 × 110 px |
-| Minimum file card | 130 × 62 px |
+| Name | Value | Meaning |
+| --- | --- | --- |
+| `BOARD_PAD` | 12 px | Board padding. |
+| `PKG_GAP` | 10 px | Gap between package cards. |
+| `FILE_GAP` | 6 px | Gap between file cards. |
+| `PKG_MIN` | 240 × 110 px | Minimum package card. |
+| `FILE_MIN` | 130 × 62 px | Minimum file card. |
+| `CHIP_H` | 24 px | Chip height at scale 1. |
+| `CHIP_GAP` | 5 px | Gap between chips at scale 1. |
+| `CHIP_PITCH` | 29 px | `CHIP_H + CHIP_GAP`: the height of one row of chips. |
+| `CONTENT_SLACK` | 1.3 | Extra area for the space at the ends of rows that do not fill. |
+| `FILE_FRAME_X` | 22 px | The width of a file card outside its chips: padding, border, and chip area padding. |
+| `FILE_FRAME_Y` | 44 px | The height of a file card outside its chips: padding, border, header, and the gap under it, with a small margin. |
+| `PKG_FRAME_X` | 26 px | The width of a package card outside its file cards: padding, border, and file gaps. |
+| `PKG_FRAME_Y` | 52 px | The height of a package card outside its file cards: padding, borders, header, and the gap under it, with a small margin. |
+
+If plan 10 changes a padding, a border, or a header height, change the
+frame values here too. If they do not agree, the weights give some file
+cards too little area and others too much. Validation step 5 of plan 10
+measures the drawn sizes against these values.
 
 The stability rule: the board lays out the cards again only when
 `layoutKey` changes. Thus, a new callable in a file does not move any card.
@@ -124,8 +139,9 @@ A new file, a removed file, or a new board size moves the cards.
 
 ### Procedure
 
-1. Make `web/src/view2d/treemap.ts`.
-2. Raise the weight of a small item until it gets its minimum area. Do this
+1. Make `web/src/view2d/dims.ts` with the constants above.
+2. Make `web/src/view2d/treemap.ts`.
+3. Raise the weight of a small item until it gets its minimum area. Do this
    in at most three passes. Then lay out.
 
 ### Tests

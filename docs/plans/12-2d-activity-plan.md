@@ -26,17 +26,20 @@ Plan 11.
 ### Result
 
 - Four corner brackets, 11 px long and 3 px thick, around the target chip,
-  with a soft glow in the same color.
+  with a glow in the same color (`drop-shadow(0 0 5px currentColor)`).
 - The color is `reticleTone(s)` (plan 05).
-- On a read, the brackets move to the new chip in 0.3 s and stay 4 px
-  outside it.
+- On a read, the brackets move to the new chip in 0.3 s
+  (`cubic-bezier(.2, .8, .2, 1)`) and stay 4 px outside it.
 - On an edit, the brackets start 12 px outside the chip. They close to 4 px
   over `LOCK_T`, so they lock on.
 - When the target changes during playback, one ring grows from the chip and
-  fades in 0.9 s (a ping).
+  fades in 0.9 s (a ping). The ring starts at the chip rectangle: a 2 px
+  border in the reticle color, corner radius 8 px, opacity 0.9. It grows to
+  1.9 times that size and ends at opacity 0, with `ease-out`. Remove the
+  ring element at `animationend`.
 - If the target chip is scrolled out of its file card, the brackets hide.
 - With `prefers-reduced-motion`, the brackets move with no transition and no
-  ping shows.
+  ping shows. The chips and the cards change with no transition.
 
 ### Procedure
 
@@ -49,16 +52,30 @@ Plan 11.
 
 - **Blast radius.** The blast radius starts at the latest edit that names a
   callable. At the hop 1 time of `blastStage` (plan 09), the callables 1 hop
-  away get a coral outline. At the hop 2 time, the callables 2 hops away get
-  a dashed, fainter outline. Use `hopsFrom` in `web/src/graph/load.ts`.
+  away get a coral outline: 1.5 px, solid, offset 1 px. At the hop 2 time,
+  the callables 2 hops away get a dashed outline: 1 px, coral at 60%, offset
+  1 px. Use `hopsFrom` in `web/src/graph/load.ts`.
 - **Heat.** A chip fills with cyan after a read and with coral after an
   edit. The fill fades over `HEAT_FADE` seconds of session time (plan 09).
-  Squares glow too.
-- **Spotlight.** The package card of the agent's file has a border in its
-  color and a soft glow. The file card of the agent has a border and glow in
-  the package color. The other package cards have 42% opacity. A file with
-  no callable in the graph (for example a Markdown file) highlights no card.
-- A legend line above the board shows: read, edited, 1 hop, 2 hops.
+  Draw the fill as a pseudo-element over the whole chip: `--cyan` at 55%
+  for a read, `--coral` at 60% for an edit. Its opacity is
+  `0.25 + 0.75 × level` while `level` (from `heat`, plan 09) is above 0,
+  and 0 after that. Squares get the same fill.
+- **Spotlight.** The package card of the agent's file stands out, and the
+  file card of the agent stands out in it:
+
+  | Card | Border | Fill | Glow |
+  | --- | --- | --- | --- |
+  | Package | Package color at 75% | Package color at 8% | A 1 px ring at 35%, and a 28 px glow at 14% |
+  | File | Package color | `--void` at 90% | A 1 px ring at 60%, and a 22 px glow at 30% |
+
+  The other package cards have 42% opacity. The opacity changes in 0.4 s;
+  the borders, fills, and glows change in 0.3 s. A file with no callable in
+  the graph (for example a Markdown file) highlights no card.
+- A legend line above the board shows: read, edited, 1 hop, 2 hops. Each
+  item is an 18 × 12 px sample chip with that mark, then the word, in
+  `--mono` 11 px `--mute`. The fit note of plan 10 is on the same line, at
+  the right.
 
 ### Procedure
 

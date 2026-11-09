@@ -850,10 +850,6 @@ func (a *analysis) resolveJavaType(state *javaFile, packageName string, value st
 	return ""
 }
 
-func isJavaRuntime(value string) bool {
-	return strings.HasPrefix(value, "java.") || strings.HasPrefix(value, "javax.") || strings.HasPrefix(value, "jdk.")
-}
-
 func (a *analysis) javaPackageForOwner(owner string) string {
 	if info := a.types[owner]; info != nil {
 		return info.packageName

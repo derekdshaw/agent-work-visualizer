@@ -191,7 +191,8 @@ func (a *Analyzer) collectSourceFiles(root string, options Options) (map[string]
 }
 
 func isGenerated(source []byte) bool {
-	lines := bytes.Split(source, []byte("\n"))
+	// The eleventh part of SplitN contains the remaining text of the file.
+	lines := bytes.SplitN(source, []byte("\n"), 11)
 	if len(lines) > 10 {
 		lines = lines[:10]
 	}

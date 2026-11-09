@@ -49,6 +49,12 @@ func TestBashReadsNameFilesAndLines(t *testing.T) {
 		want    []read
 	}{
 		{"cat pkg/a.go", "", []read{{a, span(1, 30)}}},
+		{"cat pkg/a.go || true", "", []read{{a, span(1, 30)}}},
+		{"cat pkg/a.go | head -5", "", []read{{a, span(1, 5)}}},
+		{"nl -ba pkg/a.go | sed -n '10,20p'", "", []read{{a, span(10, 20)}}},
+		{"cat pkg/a.go | tail -3", "", []read{{a, span(28, 30)}}},
+		{"cat pkg/a.go | grep x", "", nil},
+		{"cat pkg/a.go pkg/b.go | head -5", "", nil},
 		{"head -n 3 pkg/a.go pkg/b.go", "", []read{{a, span(1, 3)}, {b, span(1, 3)}}},
 		{"head -4 pkg/a.go", "", []read{{a, span(1, 4)}}},
 		{"head pkg/a.go", "", []read{{a, span(1, 10)}}},

@@ -173,16 +173,17 @@ func TestLogKeepsEventsInMemoryWhenTheFileFails(t *testing.T) {
 
 func TestListAndRead(t *testing.T) {
 	dir := t.TempDir()
-	write := func(name string, root string, title string) {
+	write := func(name string, root string, title string, t0 time.Time) {
 		l := NewLog(dir, name, root, "main")
-		l.Append([]Event{{At: start, Type: "prompt", Text: "go"}, {At: start.Add(5 * time.Second), Type: "title", Text: title}})
+		l.Append([]Event{{At: t0, Type: "prompt", Text: "go"}, {At: t0.Add(5 * time.Second), Type: "title", Text: title}})
 		if err := l.Close(); err != nil {
 			t.Fatal(err)
 		}
 	}
-	write("20260101-000000-a", "/repo", "First")
-	write("20260102-000000-b", "/other", "Other")
-	write("20260103-000000-c", "/repo", "Third")
+	// "First" starts an hour earlier, so List keeps it next to "Third".
+	write("20260101-000000-a", "/repo", "First", start.Add(-time.Hour))
+	write("20260102-000000-b", "/other", "Other", start)
+	write("20260103-000000-c", "/repo", "Third", start)
 	if err := os.WriteFile(filepath.Join(dir, "20260104-000000-d.jsonl"), []byte("not json\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +197,7 @@ func TestListAndRead(t *testing.T) {
 	}
 	want := []Summary{
 		{Name: "20260103-000000-c", Root: "/repo", Branch: "main", T0: start, Title: "Third", Events: 2, Duration: 5},
-		{Name: "20260101-000000-a", Root: "/repo", Branch: "main", T0: start, Title: "First", Events: 2, Duration: 5},
+		{Name: "20260101-000000-a", Root: "/repo", Branch: "main", T0: start.Add(-time.Hour), Title: "First", Events: 2, Duration: 5},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("List =\n%+v\nwant\n%+v", got, want)
@@ -216,6 +217,33 @@ func TestListAndRead(t *testing.T) {
 		if _, err := Read(dir, name); !errors.Is(err, ErrNotFound) {
 			t.Errorf("Read(%q) error = %v, want ErrNotFound", name, err)
 		}
+	}
+}
+
+func TestListKeepsTheNewestCopyOfEachSession(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name string, t0 time.Time) {
+		l := NewLog(dir, name, "/repo", "main")
+		l.Append([]Event{{At: t0, Type: "prompt", Text: "go"}})
+		if err := l.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Each server start replays the same session into a new log, so "a" and
+	// "b" share a start time. "c" is another session.
+	write("20260101-000000-a", start)
+	write("20260102-000000-b", start)
+	write("20260103-000000-c", start.Add(time.Hour))
+
+	got, err := List(dir, "/repo", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Name != "20260103-000000-c" || got[1].Name != "20260102-000000-b" {
+		t.Fatalf("List = %+v, want c then b", got)
+	}
+	if got, _ := List(dir, "/repo", 1); len(got) != 1 || got[0].Name != "20260103-000000-c" {
+		t.Fatalf("List with limit 1 = %+v, want only c", got)
 	}
 }
 

@@ -309,8 +309,18 @@ type Summary struct {
 	Duration float64   `json:"duration"`
 }
 
+// sessionKey identifies a session by its root and start time. T0 is a Unix
+// nanosecond count, because two equal times can have different locations.
+type sessionKey struct {
+	root string
+	t0   int64
+}
+
 // List returns the summaries of the newest limit logs in dir whose root is
-// root, newest first. A missing dir has no logs.
+// root, newest first. Each server start replays the newest session into a new
+// log, so List keeps only the newest log of each root and start time (T0): it
+// replays the same transcript from its start, so it has all the events of the
+// older copies. A missing dir has no logs.
 func List(dir string, root string, limit int) ([]Summary, error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
@@ -328,6 +338,7 @@ func List(dir string, root string, limit int) ([]Summary, error) {
 	slices.Sort(names)
 	slices.Reverse(names)
 	summaries := []Summary{}
+	seen := make(map[sessionKey]bool)
 	for _, name := range names {
 		if len(summaries) == limit {
 			break
@@ -336,9 +347,17 @@ func List(dir string, root string, limit int) ([]Summary, error) {
 		if err != nil {
 			continue
 		}
-		if summary, ok := summarize(name, data); ok && summary.Root == root {
-			summaries = append(summaries, summary)
+		summary, ok := summarize(name, data)
+		if !ok || summary.Root != root {
+			continue
 		}
+		// names is newest first, so the first log of a key is the newest copy.
+		key := sessionKey{root: summary.Root, t0: summary.T0.UnixNano()}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		summaries = append(summaries, summary)
 	}
 	return summaries, nil
 }

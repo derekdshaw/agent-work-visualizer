@@ -533,7 +533,7 @@ func TestWatchAppendsEventsAndSignalsSourceEdits(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		a := pythonAnalyzer(t)
-		live.view.watch(ctx, a, transcript.NewWatcher(projects, root), activity.NewMapper(root, a), edits)
+		live.view.watch(ctx, a, transcript.NewWatcher(projects, root), activity.NewMapper(root, a), edits, time.Time{})
 		close(done)
 	}()
 	t.Cleanup(func() {
@@ -593,6 +593,53 @@ func TestWatchAppendsEventsAndSignalsSourceEdits(t *testing.T) {
 	live.setPaused(false)
 }
 
+func TestWatchIgnoresEditsBeforeTheAnalysis(t *testing.T) {
+	projects := t.TempDir()
+	root := t.TempDir()
+	langtest.WriteFixture(t, root, "app.py", "def run():\n    return 1\n")
+	source := filepath.Join(root, "app.py")
+	patch := []transcript.Hunk{{OldStart: 1, OldLines: 1, NewStart: 1, NewLines: 2, Lines: []string{" def run():", "+    return 1"}}}
+	sessionFile := filepath.Join(projects, transcript.EncodeProjectPath(root), "s1.jsonl")
+	transcripttest.WriteTranscript(t, sessionFile,
+		transcripttest.SessionStart(root),
+		transcripttest.ToolUseLine("e1", "Edit"), transcripttest.ToolResultLine("e1", map[string]any{"filePath": source, "structuredPatch": patch}),
+	)
+
+	live := &liveServer{view: testView(t, root)}
+	edits := make(chan struct{}, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	since := transcripttest.Time.Add(time.Second)
+	go func() {
+		a := pythonAnalyzer(t)
+		live.view.watch(ctx, a, transcript.NewWatcher(projects, root), activity.NewMapper(root, a), edits, since)
+		close(done)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+
+	waitForLog(t, live.view, 2)
+	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-edits:
+		t.Fatal("an edit from before the analysis signaled a refresh")
+	default:
+	}
+
+	use := transcripttest.ToolUseLine("e2", "Edit")
+	use["timestamp"] = transcripttest.Time.Add(time.Minute)
+	result := transcripttest.ToolResultLine("e2", map[string]any{"filePath": source, "structuredPatch": patch})
+	result["timestamp"] = transcripttest.Time.Add(time.Minute)
+	transcripttest.AppendTranscript(t, sessionFile, transcripttest.MustJSON(t, use)+"\n"+transcripttest.MustJSON(t, result)+"\n")
+	select {
+	case <-edits:
+	case <-time.After(2 * time.Second):
+		t.Fatal("an edit after the analysis did not signal a refresh")
+	}
+}
+
 func TestRunFollowsSessionsUnderASymlinkedRoot(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	config := t.TempDir()
@@ -627,7 +674,13 @@ func TestRunFollowsSessionsUnderASymlinkedRoot(t *testing.T) {
 	// A source edit makes the server analyze root again.
 	langtest.WriteFixture(t, root, "app.py", "def run():\n    return added()\n\ndef added():\n    return 1\n")
 	patch := []transcript.Hunk{{OldStart: 2, OldLines: 1, NewStart: 2, NewLines: 4, Lines: []string{"-    return 1", "+    return added()", "+", "+def added():", "+    return 1"}}}
-	transcripttest.AppendTranscript(t, transcriptPath, transcripttest.MustJSON(t, transcripttest.ToolUseLine("e1", "Edit"))+"\n"+transcripttest.MustJSON(t, transcripttest.ToolResultLine("e1", map[string]any{"filePath": filepath.Join(root, "app.py"), "structuredPatch": patch}))+"\n")
+	// The edit must carry a current timestamp, because watch ignores edits
+	// from before the startup analysis.
+	editUse := transcripttest.ToolUseLine("e1", "Edit")
+	editUse["timestamp"] = time.Now().UTC()
+	editResult := transcripttest.ToolResultLine("e1", map[string]any{"filePath": filepath.Join(root, "app.py"), "structuredPatch": patch})
+	editResult["timestamp"] = time.Now().UTC()
+	transcripttest.AppendTranscript(t, transcriptPath, transcripttest.MustJSON(t, editUse)+"\n"+transcripttest.MustJSON(t, editResult)+"\n")
 	waitForStreamEvent(t, events, func(event serverEvent) bool {
 		return event.name == "graph" && event.data == `{"version":2}`
 	}, "no graph event after the source edit")

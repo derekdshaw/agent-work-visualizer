@@ -87,12 +87,31 @@ func TestServeFileStaysInsideTheFolder(t *testing.T) {
 	if err := os.Symlink(secret, filepath.Join(root, "link.txt")); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("notes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	live := &liveServer{view: testView(t, root)}
+	if _, err := live.view.setGraph(&callgraph.Graph{Nodes: []callgraph.Function{{File: "pkg/a.py"}}}); err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(live.routes())
 	t.Cleanup(server.Close)
 
 	if body := getBody(t, server.URL+"/api/file?path=pkg/a.py", "text/plain; charset=utf-8"); body != "def f():\n    pass\n" {
 		t.Fatalf("GET pkg/a.py = %q, want the file", body)
+	}
+	// The view does not know notes.txt until an event names it.
+	response, err := http.Get(server.URL + "/api/file?path=notes.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("GET notes.txt status = %d, want 404", response.StatusCode)
+	}
+	live.view.appendEvents([]session.Event{{Type: "edit", Path: "notes.txt"}})
+	if body := getBody(t, server.URL+"/api/file?path=notes.txt", "text/plain; charset=utf-8"); body != "notes" {
+		t.Fatalf("GET notes.txt = %q, want the file", body)
 	}
 	for _, path := range []string{"../secret.txt", secret, "link.txt", "pkg", "missing.py", ""} {
 		response, err := http.Get(server.URL + "/api/file?path=" + url.QueryEscape(path))

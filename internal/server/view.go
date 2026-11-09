@@ -44,6 +44,7 @@ type rootView struct {
 	mu       sync.RWMutex
 	version  int
 	payload  []byte
+	files    map[string]bool
 	sessions map[string]bool
 	controls map[string]control
 	sequence int
@@ -64,6 +65,7 @@ func newView(root string, branch string, sessions string) *rootView {
 		root:     root,
 		branch:   branch,
 		log:      session.NewLog(sessions, session.NewName(time.Now()), root, branch),
+		files:    make(map[string]bool),
 		controls: make(map[string]control),
 		waiters:  make(map[chan struct{}]bool),
 	}
@@ -146,7 +148,19 @@ func (v *rootView) setGraph(graph *callgraph.Graph) (int, error) {
 		return 0, fmt.Errorf("encode graph payload: %w", err)
 	}
 	v.version, v.payload = version, payload
+	// Keep the files that are in files already, because the log can name them.
+	for _, node := range graph.Nodes {
+		v.files[node.File] = true
+	}
 	return version, nil
+}
+
+// knows reports whether a graph node is in the file at path, or an event of
+// the log names it.
+func (v *rootView) knows(path string) bool {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return v.files[path]
 }
 
 // graphPayload returns the encoded graph payload.
@@ -207,6 +221,13 @@ func (v *rootView) appendEvents(events []session.Event) {
 		return
 	}
 	v.log.Append(events)
+	v.mu.Lock()
+	for _, event := range events {
+		if event.Path != "" {
+			v.files[event.Path] = true
+		}
+	}
+	v.mu.Unlock()
 	v.wake()
 }
 

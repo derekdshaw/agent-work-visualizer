@@ -253,18 +253,23 @@ func writeJSON(w http.ResponseWriter, value any) {
 // relative to it. os.Root refuses a path that leaves the folder, through ".."
 // or a symbolic link.
 func (s *liveServer) serveFile(w http.ResponseWriter, r *http.Request) {
-	root := s.current().root
-	if root == "" {
+	view := s.current()
+	if view.root == "" {
 		http.Error(w, "no folder is open", http.StatusNotFound)
 		return
 	}
-	dir, err := os.OpenRoot(root)
+	path := r.URL.Query().Get("path")
+	if !view.knows(path) {
+		http.Error(w, "no such file in the session", http.StatusNotFound)
+		return
+	}
+	dir, err := os.OpenRoot(view.root)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
 	defer dir.Close()
-	file, err := dir.Open(filepath.FromSlash(r.URL.Query().Get("path")))
+	file, err := dir.Open(filepath.FromSlash(path))
 	if err != nil {
 		http.Error(w, "no such file in the folder", http.StatusNotFound)
 		return

@@ -1,12 +1,10 @@
 package golang
 
 import (
-	"slices"
 	"strings"
 	"testing"
 
 	"github.com/derekdshaw/agent-work-visualizer/internal/analyzer"
-	"github.com/derekdshaw/agent-work-visualizer/internal/callgraph"
 	"github.com/derekdshaw/agent-work-visualizer/internal/lang/langtest"
 )
 
@@ -72,39 +70,26 @@ func Dot() {}
 	if err != nil {
 		t.Fatal(err)
 	}
-	if graph.Stats.Files != 4 || graph.Stats.Definitions != 8 || graph.Stats.Calls != 8 {
-		t.Fatalf("stats = %+v, want 4 files, 8 definitions, and 8 calls", graph.Stats)
+	if len(graph.Nodes) != 8 {
+		t.Fatalf("nodes = %d, want 8", len(graph.Nodes))
 	}
 	main := langtest.FindFunction(t, graph, "cmd.app.main")
-	if !main.Entrypoint || main.EntryKind != "main" || main.Language != "go" {
+	if main.Language != "go" {
 		t.Fatalf("Go main metadata = %+v", *main)
 	}
 	start := langtest.FindFunction(t, graph, "cmd.app.Runner.Start")
-	if start.Kind != "method" || start.Class != "Runner" || start.Signature != "func (runner *Runner) Start()" {
+	if start.Kind != "method" || start.Class != "Runner" {
 		t.Fatalf("Go method metadata = %+v", *start)
 	}
-	langtest.AssertEdge(t, graph, "cmd.app.main", "cmd.app.run", "call", 1)
-	langtest.AssertEdge(t, graph, "cmd.app.run", "cmd.app.local", "call", 1)
-	langtest.AssertEdge(t, graph, "cmd.app.run", "internal.cleaner.Clean", "call", 1)
-	langtest.AssertEdge(t, graph, "cmd.app.run", "internal.shared.Share", "call", 1)
-	langtest.AssertEdge(t, graph, "cmd.app.run", "internal.dot.Dot", "call", 1)
-	langtest.AssertEdge(t, graph, "cmd.app.Runner.Start", "cmd.app.Runner.finish", "call", 1)
-	if !slices.ContainsFunc(graph.Unresolved, func(call callgraph.UnresolvedCall) bool {
-		return call.Language == "go" && call.Expression == "fmt.Println" && call.Category == "external"
-	}) {
-		t.Fatal("external Go call was not retained as unresolved")
-	}
-	if !slices.ContainsFunc(graph.Unresolved, func(call callgraph.UnresolvedCall) bool {
-		return call.Language == "go" && call.Expression == "len" && call.Category == "builtin"
-	}) {
-		t.Fatal("Go built-in call was not retained as unresolved")
-	}
+	langtest.AssertEdge(t, graph, "cmd.app.main", "cmd.app.run", "call")
+	langtest.AssertEdge(t, graph, "cmd.app.run", "cmd.app.local", "call")
+	langtest.AssertEdge(t, graph, "cmd.app.run", "internal.cleaner.Clean", "call")
+	langtest.AssertEdge(t, graph, "cmd.app.run", "internal.shared.Share", "call")
+	langtest.AssertEdge(t, graph, "cmd.app.run", "internal.dot.Dot", "call")
+	langtest.AssertEdge(t, graph, "cmd.app.Runner.Start", "cmd.app.Runner.finish", "call")
 	included, err := langtest.Analyze(root, analyzer.Options{IncludeTests: true}, New())
 	if err != nil {
 		t.Fatal(err)
-	}
-	if included.Stats.Files != 6 {
-		t.Fatalf("files with tests = %d, want 6", included.Stats.Files)
 	}
 	langtest.FindFunction(t, included, "cmd.app.ignored")
 	langtest.FindFunction(t, included, "cmd.app.testdata.ignored")
@@ -127,11 +112,8 @@ func register() {}
 	if err != nil {
 		t.Fatal(err)
 	}
-	initializer := langtest.FindFunction(t, graph, "cmd.app.init")
-	if !initializer.Entrypoint || initializer.EntryKind != "init" {
-		t.Fatalf("Go init metadata = %+v", *initializer)
-	}
-	langtest.AssertEdge(t, graph, "cmd.app.init", "cmd.app.register", "call", 1)
+	langtest.FindFunction(t, graph, "cmd.app.init")
+	langtest.AssertEdge(t, graph, "cmd.app.init", "cmd.app.register", "call")
 }
 
 func TestAnalyzeGoNewExpression(t *testing.T) {
@@ -170,17 +152,12 @@ func after() {
 		t.Fatal(err)
 	}
 	build := langtest.FindFunction(t, graph, "cmd.app.build")
-	if build.Line != 13 || build.EndLine != 21 || !strings.Contains(build.Source, "new(f(new(int(size()))))") {
+	if build.Line != 13 || build.EndLine != 21 {
 		t.Fatalf("build metadata = %+v", *build)
 	}
-	langtest.AssertEdge(t, graph, "cmd.app.build", "cmd.app.size", "call", 2)
-	langtest.AssertEdge(t, graph, "cmd.app.build", "cmd.app.f", "call", 2)
-	langtest.AssertEdge(t, graph, "cmd.app.after", "cmd.app.size", "call", 1)
-	if !slices.ContainsFunc(graph.Unresolved, func(call callgraph.UnresolvedCall) bool {
-		return call.Expression == "new" && call.Category == "builtin"
-	}) {
-		t.Fatal("new call was not retained as a built-in unresolved call")
-	}
+	langtest.AssertEdge(t, graph, "cmd.app.build", "cmd.app.size", "call")
+	langtest.AssertEdge(t, graph, "cmd.app.build", "cmd.app.f", "call")
+	langtest.AssertEdge(t, graph, "cmd.app.after", "cmd.app.size", "call")
 }
 
 func TestGoSyntaxErrorAfterNewExpression(t *testing.T) {

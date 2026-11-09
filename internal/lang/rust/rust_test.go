@@ -58,19 +58,17 @@ impl Worker {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if graph.Stats.Files != 2 || graph.Stats.Definitions != 8 {
-		t.Fatalf("stats = %+v, want 2 files and 8 definitions", graph.Stats)
+	if len(graph.Nodes) != 8 {
+		t.Fatalf("nodes = %d, want 8", len(graph.Nodes))
 	}
-	if main := langtest.FindFunction(t, graph, "main"); !main.Entrypoint || main.EntryKind != "main" {
-		t.Fatal("Rust main was not marked as an entrypoint")
-	}
-	langtest.AssertEdge(t, graph, "main", "local", "call", 1)
-	langtest.AssertEdge(t, graph, "main", "inline.caller", "call", 1)
-	langtest.AssertEdge(t, graph, "inline.caller", "inline.inside", "call", 1)
-	langtest.AssertEdge(t, graph, "main", "util.helper", "call", 1)
-	langtest.AssertEdge(t, graph, "main", "util.Worker.build", "call", 1)
-	langtest.AssertEdge(t, graph, "util.Worker.run", "util.helper", "call", 1)
-	langtest.AssertEdge(t, graph, "util.Worker.run", "util.Worker.finish", "call", 1)
+	langtest.FindFunction(t, graph, "main")
+	langtest.AssertEdge(t, graph, "main", "local", "call")
+	langtest.AssertEdge(t, graph, "main", "inline.caller", "call")
+	langtest.AssertEdge(t, graph, "inline.caller", "inline.inside", "call")
+	langtest.AssertEdge(t, graph, "main", "util.helper", "call")
+	langtest.AssertEdge(t, graph, "main", "util.Worker.build", "call")
+	langtest.AssertEdge(t, graph, "util.Worker.run", "util.helper", "call")
+	langtest.AssertEdge(t, graph, "util.Worker.run", "util.Worker.finish", "call")
 }
 
 func TestAnalyzeRustResolvesCallsAcrossWorkspaceCrates(t *testing.T) {
@@ -105,7 +103,7 @@ fn main() {
 	}
 	const retrieve = "crates.engraph-retrieve.src."
 	const cli = "crates.engraph-cli.src."
-	langtest.AssertEdge(t, graph, cli+"main", retrieve+"scope.add_member", "call", 2)
-	langtest.AssertEdge(t, graph, cli+"main", cli+"cli.run", "call", 1)
-	langtest.AssertEdge(t, graph, retrieve+"scope.reset", retrieve+"scope.add_member", "call", 1)
+	langtest.AssertEdge(t, graph, cli+"main", retrieve+"scope.add_member", "call")
+	langtest.AssertEdge(t, graph, cli+"main", cli+"cli.run", "call")
+	langtest.AssertEdge(t, graph, retrieve+"scope.reset", retrieve+"scope.add_member", "call")
 }

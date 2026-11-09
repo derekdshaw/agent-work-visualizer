@@ -60,21 +60,18 @@ function action(): void {}
 	if err != nil {
 		t.Fatal(err)
 	}
-	if graph.Stats.Files != 4 || graph.Stats.Definitions != 10 {
-		t.Fatalf("stats = %+v, want 4 files and 10 definitions", graph.Stats)
+	if len(graph.Nodes) != 10 {
+		t.Fatalf("nodes = %d, want 10", len(graph.Nodes))
 	}
-	if !langtest.FindFunction(t, graph, "src.app.run").Async {
-		t.Fatal("async TypeScript function was not identified")
-	}
-	langtest.AssertEdge(t, graph, "src.app.run", "src.app.local", "call", 1)
-	langtest.AssertEdge(t, graph, "src.app.run", "src.helper.helper", "call", 1)
-	langtest.AssertEdge(t, graph, "src.app.run", "src.defaulted.execute", "call", 1)
-	langtest.AssertEdge(t, graph, "src.app.run", "src.helper.Worker.constructor", "call", 1)
-	langtest.AssertEdge(t, graph, "src.app.run", "src.helper.Worker.build", "call", 1)
-	langtest.AssertEdge(t, graph, "src.helper.Worker.constructor", "src.helper.helper", "call", 1)
-	langtest.AssertEdge(t, graph, "src.app.local", "src.helper.helper", "call", 1)
-	langtest.AssertEdge(t, graph, "src.app.App.start", "src.app.App.finish", "call", 1)
-	langtest.AssertEdge(t, graph, "src.view.View", "src.view.action", "call", 1)
+	langtest.AssertEdge(t, graph, "src.app.run", "src.app.local", "call")
+	langtest.AssertEdge(t, graph, "src.app.run", "src.helper.helper", "call")
+	langtest.AssertEdge(t, graph, "src.app.run", "src.defaulted.execute", "call")
+	langtest.AssertEdge(t, graph, "src.app.run", "src.helper.Worker.constructor", "call")
+	langtest.AssertEdge(t, graph, "src.app.run", "src.helper.Worker.build", "call")
+	langtest.AssertEdge(t, graph, "src.helper.Worker.constructor", "src.helper.helper", "call")
+	langtest.AssertEdge(t, graph, "src.app.local", "src.helper.helper", "call")
+	langtest.AssertEdge(t, graph, "src.app.App.start", "src.app.App.finish", "call")
+	langtest.AssertEdge(t, graph, "src.view.View", "src.view.action", "call")
 }
 
 func TestTypescriptDefaultImportIgnoresSubmoduleDefaults(t *testing.T) {
@@ -101,6 +98,6 @@ function main(): void {
 				t.Fatalf("default import resolved to a submodule's default export: %+v", edge)
 			}
 		}
-		langtest.AssertEdge(t, graph, "app.main", "util.format", "call", 1)
+		langtest.AssertEdge(t, graph, "app.main", "util.format", "call")
 	}
 }

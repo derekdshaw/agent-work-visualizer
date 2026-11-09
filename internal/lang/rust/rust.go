@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 
 	"github.com/derekdshaw/agent-work-visualizer/internal/callgraph"
@@ -153,8 +152,6 @@ func (a *analysis) analyzeRustFile(path string) error {
 		}
 	}
 	a.files[relative] = state
-	a.graph.Files = append(a.graph.Files, callgraph.File{Path: relative, Module: state.module, Language: "rust"})
-	a.graph.Stats.Files++
 	a.walkRust(root, source, relative, state, "", "")
 	return nil
 }
@@ -220,7 +217,6 @@ func (a *analysis) walkRust(
 	case "call_expression":
 		function := node.ChildByFieldName("function")
 		if function != nil {
-			a.graph.Stats.Calls++
 			a.calls = append(a.calls, rustCall{
 				caller:     parentID,
 				expression: strings.TrimSpace(function.Utf8Text(source)),
@@ -261,7 +257,6 @@ func (a *analysis) collectRustFunction(
 	qualifiedName := langutil.Qualified(prefix, name)
 	point := node.StartPosition()
 	end := node.EndPosition()
-	header := string(source[node.StartByte():body.StartByte()])
 	function := callgraph.Function{
 		ID:            fmt.Sprintf("%s:%d:%s", file, point.Row+1, qualifiedName),
 		Name:          name,
@@ -270,17 +265,11 @@ func (a *analysis) collectRustFunction(
 		File:          file,
 		Directory:     filepath.ToSlash(filepath.Dir(file)),
 		Line:          point.Row + 1,
-		Column:        point.Column + 1,
 		EndLine:       end.Row + 1,
-		Signature:     strings.TrimSpace(header),
-		Source:        node.Utf8Text(source),
 		Class:         owner,
 		Parent:        parentID,
-		Async:         strings.Contains(header, "async fn"),
 		Language:      "rust",
 		Kind:          "function",
-		Modifiers:     rustModifiers(header),
-		Parameters:    rustParameters(parameters, source),
 	}
 	if function.Directory == "." {
 		function.Directory = ""
@@ -288,13 +277,8 @@ func (a *analysis) collectRustFunction(
 	if owner != "" {
 		function.Kind = "method"
 	}
-	if name == "main" && owner == "" && parentID == "" {
-		function.Entrypoint = true
-		function.EntryKind = "main"
-	}
 	a.graph.Nodes = append(a.graph.Nodes, function)
 	a.nodesByID[function.ID] = &a.graph.Nodes[len(a.graph.Nodes)-1]
-	a.graph.Stats.Definitions++
 	for i := uint(0); i < body.NamedChildCount(); i++ {
 		a.walkRust(body.NamedChild(i), source, file, state, owner, function.ID)
 	}
@@ -309,24 +293,6 @@ func rustBaseType(value string) string {
 		value = value[index+2:]
 	}
 	return strings.TrimSpace(value)
-}
-
-func rustModifiers(header string) []string {
-	var modifiers []string
-	for _, modifier := range []string{"pub", "async", "const", "unsafe", "extern"} {
-		if strings.Contains(header, modifier+" ") {
-			modifiers = append(modifiers, modifier)
-		}
-	}
-	return modifiers
-}
-
-func rustParameters(parameters *tree_sitter.Node, source []byte) []string {
-	var values []string
-	for i := uint(0); i < parameters.NamedChildCount(); i++ {
-		values = append(values, strings.TrimSpace(parameters.NamedChild(i).Utf8Text(source)))
-	}
-	return values
 }
 
 func collectRustUse(text string, state *rustFile) {
@@ -395,16 +361,9 @@ func (a *analysis) resolveRustCalls() {
 		}
 	}
 	edges := make(map[string]*callgraph.Edge)
-	lineSets := make(map[string]map[uint]bool)
 	for _, call := range a.calls {
 		target := a.resolveRustCall(call, byQualified)
 		if target == nil {
-			if call.caller != "" {
-				a.graph.Unresolved = append(a.graph.Unresolved, callgraph.UnresolvedCall{
-					Caller: call.caller, Expression: call.expression, File: call.file, Line: call.line,
-					Category: a.rustUnresolvedCategory(call), Language: "rust",
-				})
-			}
 			continue
 		}
 		if call.caller == "" {
@@ -413,20 +372,11 @@ func (a *analysis) resolveRustCalls() {
 		key := call.caller + "\x00" + target.ID + "\x00call"
 		if edges[key] == nil {
 			edges[key] = &callgraph.Edge{Source: call.caller, Target: target.ID, Kind: "call"}
-			lineSets[key] = make(map[uint]bool)
 		}
-		edges[key].Count++
-		lineSets[key][call.line] = true
-		a.graph.Stats.Resolved++
 	}
-	for key, edge := range edges {
-		for line := range lineSets[key] {
-			edge.Lines = append(edge.Lines, line)
-		}
-		sort.Slice(edge.Lines, func(i, j int) bool { return edge.Lines[i] < edge.Lines[j] })
+	for _, edge := range edges {
 		a.graph.Edges = append(a.graph.Edges, *edge)
 	}
-	a.graph.Stats.Unresolved = len(a.graph.Unresolved)
 }
 
 func (a *analysis) resolveRustCall(call rustCall, byQualified map[string]*callgraph.Function) *callgraph.Function {
@@ -473,12 +423,4 @@ func (a *analysis) resolveRustCall(call rustCall, byQualified map[string]*callgr
 		return target
 	}
 	return byQualified[expression]
-}
-
-func (a *analysis) rustUnresolvedCategory(call rustCall) string {
-	root := strings.Split(strings.ReplaceAll(call.expression, "::", "."), ".")[0]
-	if state := a.files[call.file]; state != nil && state.imports[root] != "" {
-		return "external"
-	}
-	return "dynamic"
 }

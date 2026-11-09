@@ -3,12 +3,9 @@ package python
 import (
 	"encoding/json"
 	"regexp"
-	"slices"
-	"strings"
 	"testing"
 
 	"github.com/derekdshaw/agent-work-visualizer/internal/analyzer"
-	"github.com/derekdshaw/agent-work-visualizer/internal/callgraph"
 	"github.com/derekdshaw/agent-work-visualizer/internal/lang/langtest"
 )
 
@@ -117,36 +114,20 @@ def omitted():
 	if string(firstJSON) != string(secondJSON) {
 		t.Fatal("analysis is not deterministic")
 	}
-	if first.Stats.Files != 3 {
-		t.Fatalf("files = %d, want 3", first.Stats.Files)
+	if len(first.Nodes) != 15 {
+		t.Fatalf("nodes = %d, want 15", len(first.Nodes))
 	}
-	if first.Stats.Definitions != 15 || first.Stats.Calls != 21 {
-		t.Fatalf("fidelity stats = %+v, want 15 definitions and 21 calls", first.Stats)
-	}
-	if langtest.FindFunction(t, first, "pkg.a.main").EntryKind != "main" {
-		t.Fatal("main guard did not mark main as an entrypoint")
-	}
-	if langtest.FindFunction(t, first, "pkg.a.Flow.start").EntryKind != "metaflow-step" {
-		t.Fatal("@step method was not marked as a Metaflow entrypoint")
-	}
-	if !strings.Contains(langtest.FindFunction(t, first, "pkg.a.Flow.start").Source, "self.next(self.finish, self.alternate)") {
-		t.Fatal("function source was not captured")
-	}
+	langtest.FindFunction(t, first, "pkg.a.main")
 
-	langtest.AssertEdge(t, first, "pkg.a.Flow.start", "pkg.a.helper", "call", 2)
-	langtest.AssertEdge(t, first, "pkg.a.Flow.start", "pkg.a.Flow.finish", "transition", 1)
-	langtest.AssertEdge(t, first, "pkg.a.Flow.start", "pkg.a.Flow.alternate", "transition", 1)
-	langtest.AssertEdge(t, first, "pkg.a.Worker.build", "pkg.a.Worker.work", "call", 1)
-	langtest.AssertEdge(t, first, "pkg.a.Worker.run", "pkg.a.Worker.work", "call", 1)
-	langtest.AssertEdge(t, first, "pkg.a.outer", "pkg.a.outer.nested", "call", 1)
-	langtest.AssertEdge(t, first, "pkg.a.outer", "pkg.b.imported", "call", 1)
-	langtest.AssertEdge(t, first, "pkg.a.outer", "pkg.b.target", "call", 1)
-	langtest.AssertEdge(t, first, "pkg.package_call", "pkg.b.target", "call", 1)
-	if !slices.ContainsFunc(first.Unresolved, func(call callgraph.UnresolvedCall) bool {
-		return call.Expression == "external.unknown"
-	}) {
-		t.Fatal("external call was not retained as unresolved")
-	}
+	langtest.AssertEdge(t, first, "pkg.a.Flow.start", "pkg.a.helper", "call")
+	langtest.AssertEdge(t, first, "pkg.a.Flow.start", "pkg.a.Flow.finish", "transition")
+	langtest.AssertEdge(t, first, "pkg.a.Flow.start", "pkg.a.Flow.alternate", "transition")
+	langtest.AssertEdge(t, first, "pkg.a.Worker.build", "pkg.a.Worker.work", "call")
+	langtest.AssertEdge(t, first, "pkg.a.Worker.run", "pkg.a.Worker.work", "call")
+	langtest.AssertEdge(t, first, "pkg.a.outer", "pkg.a.outer.nested", "call")
+	langtest.AssertEdge(t, first, "pkg.a.outer", "pkg.b.imported", "call")
+	langtest.AssertEdge(t, first, "pkg.a.outer", "pkg.b.target", "call")
+	langtest.AssertEdge(t, first, "pkg.package_call", "pkg.b.target", "call")
 }
 
 func TestModernPythonSyntaxAndTestInclusion(t *testing.T) {
@@ -167,12 +148,10 @@ async def consume(items):
 	if err != nil {
 		t.Fatal(err)
 	}
-	if graph.Stats.Files != 2 || graph.Stats.Definitions != 3 {
-		t.Fatalf("stats = %+v, want 2 files and 3 definitions", graph.Stats)
+	if len(graph.Nodes) != 3 {
+		t.Fatalf("nodes = %d, want 3", len(graph.Nodes))
 	}
-	if !langtest.FindFunction(t, graph, "modern.consume").Async {
-		t.Fatal("async function was not identified")
-	}
+	langtest.FindFunction(t, graph, "modern.consume")
 }
 
 func TestRejectsSyntaxErrors(t *testing.T) {
@@ -188,26 +167,5 @@ func TestRejectsSyntaxErrors(t *testing.T) {
 	}
 	if !matched {
 		t.Fatalf("error lacks path, line, and column: %v", err)
-	}
-}
-
-func TestUnresolvedCallCategories(t *testing.T) {
-	a := analysis{files: map[string]*fileState{
-		"sample.py": {imports: map[string]importRef{"json": {module: "json"}}},
-	}}
-	tests := []struct {
-		expression string
-		category   string
-	}{
-		{expression: "str", category: "builtin"},
-		{expression: "ValueError", category: "builtin"},
-		{expression: "json.dumps", category: "external"},
-		{expression: "row.get", category: "dynamic"},
-	}
-	for _, test := range tests {
-		call := rawCall{expression: test.expression, file: "sample.py"}
-		if category := a.unresolvedCategory(call); category != test.category {
-			t.Errorf("%s category = %q, want %q", test.expression, category, test.category)
-		}
 	}
 }

@@ -98,12 +98,11 @@ func (a *Analyzer) Analyze(root string, options Options) (*callgraph.Graph, erro
 	if err != nil {
 		return nil, err
 	}
-	// The viewer reads nodes, edges, and unresolved as JSON arrays. A nil slice encodes as null.
+	// The viewer reads nodes and edges as JSON arrays. A nil slice encodes as null.
 	graph := &callgraph.Graph{
-		Root:       absoluteRoot,
-		Nodes:      []callgraph.Function{},
-		Edges:      []callgraph.Edge{},
-		Unresolved: []callgraph.UnresolvedCall{},
+		Root:  absoluteRoot,
+		Nodes: []callgraph.Function{},
+		Edges: []callgraph.Edge{},
 	}
 	for _, language := range a.languages {
 		paths := files[language.Name()]
@@ -205,32 +204,17 @@ func isGenerated(source []byte) bool {
 }
 
 func merge(graph *callgraph.Graph, part *callgraph.Graph) {
-	graph.Files = append(graph.Files, part.Files...)
 	graph.Nodes = append(graph.Nodes, part.Nodes...)
 	graph.Edges = append(graph.Edges, part.Edges...)
-	graph.Unresolved = append(graph.Unresolved, part.Unresolved...)
-	graph.Stats.Files += part.Stats.Files
-	graph.Stats.Definitions += part.Stats.Definitions
-	graph.Stats.Calls += part.Stats.Calls
-	graph.Stats.Resolved += part.Stats.Resolved
-	graph.Stats.Unresolved = len(graph.Unresolved)
 }
 
 func finish(graph *callgraph.Graph) {
-	sort.Slice(graph.Files, func(i, j int) bool {
-		return graph.Files[i].Path < graph.Files[j].Path
-	})
 	sort.Slice(graph.Nodes, func(i, j int) bool {
 		return graph.Nodes[i].ID < graph.Nodes[j].ID
 	})
 	sort.Slice(graph.Edges, func(i, j int) bool {
 		left := graph.Edges[i].Source + "\x00" + graph.Edges[i].Target + "\x00" + graph.Edges[i].Kind
 		right := graph.Edges[j].Source + "\x00" + graph.Edges[j].Target + "\x00" + graph.Edges[j].Kind
-		return left < right
-	})
-	sort.Slice(graph.Unresolved, func(i, j int) bool {
-		left := fmt.Sprintf("%s:%09d:%s", graph.Unresolved[i].File, graph.Unresolved[i].Line, graph.Unresolved[i].Expression)
-		right := fmt.Sprintf("%s:%09d:%s", graph.Unresolved[j].File, graph.Unresolved[j].Line, graph.Unresolved[j].Expression)
 		return left < right
 	})
 }

@@ -141,8 +141,6 @@ func (a *analysis) analyzeJavaFile(path string) error {
 	relative = filepath.ToSlash(relative)
 	state := parseJavaFile(root, source)
 	a.files[relative] = state
-	a.graph.Files = append(a.graph.Files, callgraph.File{Path: relative, Module: state.packageName, Language: "java"})
-	a.graph.Stats.Files++
 	for i := uint(0); i < root.NamedChildCount(); i++ {
 		child := root.NamedChild(i)
 		if isJavaTypeDeclaration(child.Kind()) {
@@ -300,10 +298,6 @@ func (a *analysis) collectJavaCallable(
 	point := node.StartPosition()
 	end := node.EndPosition()
 	modifiers, annotations := javaModifiers(node, source)
-	signatureEnd := node.EndByte()
-	if body := node.ChildByFieldName("body"); body != nil {
-		signatureEnd = body.StartByte()
-	}
 	function := callgraph.Function{
 		ID:            id,
 		Name:          name,
@@ -312,26 +306,17 @@ func (a *analysis) collectJavaCallable(
 		File:          file,
 		Directory:     filepath.ToSlash(filepath.Dir(file)),
 		Line:          point.Row + 1,
-		Column:        point.Column + 1,
 		EndLine:       end.Row + 1,
-		Signature:     strings.TrimSpace(string(source[node.StartByte():signatureEnd])),
-		Source:        node.Utf8Text(source),
 		Decorators:    annotations,
 		Class:         owner.qualifiedName,
-		Entrypoint:    isJavaMain(node, source, name, parameterTypes, modifiers),
 		Language:      "java",
 		Kind:          kind,
 		Modifiers:     modifiers,
-		Parameters:    parameterTypes,
 	}
 	if function.Directory == "." {
 		function.Directory = ""
 	}
-	if function.Entrypoint {
-		function.EntryKind = "main"
-	}
 	a.graph.Nodes = append(a.graph.Nodes, function)
-	a.graph.Stats.Definitions++
 	callable := &javaCallable{
 		id: id, owner: owner.qualifiedName, name: callName, parameterTypes: parameterTypes,
 		varargs: varargs, constructor: constructor, file: state,
@@ -427,24 +412,6 @@ func javaModifiers(node *tree_sitter.Node, source []byte) ([]string, []string) {
 	return modifiers, annotations
 }
 
-func isJavaMain(
-	node *tree_sitter.Node,
-	source []byte,
-	name string,
-	parameters []string,
-	modifiers []string,
-) bool {
-	typeNode := node.ChildByFieldName("type")
-	if name != "main" || len(parameters) != 1 || typeNode == nil || normalizeJavaType(typeNode.Utf8Text(source)) != "void" {
-		return false
-	}
-	if !slices.Contains(modifiers, "public") || !slices.Contains(modifiers, "static") {
-		return false
-	}
-	parameter := eraseJavaType(parameters[0])
-	return parameter == "String[]" || parameter == "java.lang.String[]"
-}
-
 func collectJavaVariables(node *tree_sitter.Node, source []byte, variables map[string]string) {
 	typeNode := node.ChildByFieldName("type")
 	if typeNode == nil {
@@ -526,7 +493,6 @@ func (a *analysis) collectJavaCalls(
 				constructor: constructor, reference: true, kind: "dispatch", state: state,
 				variables: cloneStringMap(variables),
 			})
-			a.graph.Stats.Calls++
 		}
 	}
 	for i := uint(0); i < node.NamedChildCount(); i++ {
@@ -557,7 +523,6 @@ func (a *analysis) addJavaCall(
 		line: node.StartPosition().Row + 1, constructor: constructor,
 		explicitSuper: explicitSuper, kind: "call", state: state, variables: cloneStringMap(variables),
 	})
-	a.graph.Stats.Calls++
 }
 
 func inferJavaExpressionType(node *tree_sitter.Node, source []byte, variables map[string]string) string {
@@ -641,36 +606,19 @@ func cloneStringMap(source map[string]string) map[string]string {
 }
 
 func (a *analysis) resolveJavaCalls() {
-	edges := make(map[string]*callgraph.Edge)
-	lineSets := make(map[string]map[uint]bool)
+	edges := make(map[string]bool)
 	for _, call := range a.calls {
 		target := a.resolveJavaCall(call)
 		if target == nil {
-			a.graph.Unresolved = append(a.graph.Unresolved, callgraph.UnresolvedCall{
-				Caller: call.caller, Expression: call.expression, File: call.file, Line: call.line,
-				Category: a.javaUnresolvedCategory(call), Language: "java",
-			})
 			continue
 		}
 		key := call.caller + "\x00" + target.id + "\x00" + call.kind
-		edge := edges[key]
-		if edge == nil {
-			edge = &callgraph.Edge{Source: call.caller, Target: target.id, Kind: call.kind}
-			edges[key] = edge
-			lineSets[key] = make(map[uint]bool)
+		if edges[key] {
+			continue
 		}
-		edge.Count++
-		lineSets[key][call.line] = true
-		a.graph.Stats.Resolved++
+		edges[key] = true
+		a.graph.Edges = append(a.graph.Edges, callgraph.Edge{Source: call.caller, Target: target.id, Kind: call.kind})
 	}
-	for key, edge := range edges {
-		for line := range lineSets[key] {
-			edge.Lines = append(edge.Lines, line)
-		}
-		sort.Slice(edge.Lines, func(i, j int) bool { return edge.Lines[i] < edge.Lines[j] })
-		a.graph.Edges = append(a.graph.Edges, *edge)
-	}
-	a.graph.Stats.Unresolved = len(a.graph.Unresolved)
 }
 
 func (a *analysis) resolveJavaCall(call javaCall) *javaCallable {
@@ -902,42 +850,6 @@ func (a *analysis) resolveJavaType(state *javaFile, packageName string, value st
 	return ""
 }
 
-func (a *analysis) javaUnresolvedCategory(call javaCall) string {
-	values := []string{call.receiver}
-	if call.constructor {
-		values = []string{call.receiver}
-	}
-	for _, value := range values {
-		root := strings.SplitN(strings.TrimPrefix(value, "this."), ".", 2)[0]
-		if imported := call.state.imports[root]; imported != "" {
-			if isJavaRuntime(imported) {
-				return "builtin"
-			}
-			return "external"
-		}
-		if javaLangTypes[root] || isJavaRuntime(value) {
-			return "builtin"
-		}
-		if variableType := call.variables[root]; variableType != "" {
-			resolved := a.resolveJavaType(call.state, a.javaPackageForOwner(call.owner), variableType)
-			if isJavaRuntime(resolved) {
-				return "builtin"
-			}
-			typeRoot := strings.SplitN(eraseJavaType(variableType), ".", 2)[0]
-			if imported := call.state.imports[typeRoot]; imported != "" {
-				return "external"
-			}
-		}
-	}
-	if owners := call.state.staticImports[call.name]; len(owners) > 0 {
-		if isJavaRuntime(owners[0]) {
-			return "builtin"
-		}
-		return "external"
-	}
-	return "dynamic"
-}
-
 func isJavaRuntime(value string) bool {
 	return strings.HasPrefix(value, "java.") || strings.HasPrefix(value, "javax.") || strings.HasPrefix(value, "jdk.")
 }
@@ -976,8 +888,7 @@ func (a *analysis) addJavaDispatchEdges() {
 				key := matches[0].id + "\x00" + override.id + "\x00dispatch"
 				if !existing[key] {
 					a.graph.Edges = append(a.graph.Edges, callgraph.Edge{
-						Source: matches[0].id, Target: override.id, Kind: "dispatch", Count: 1,
-						Lines: []uint{function.Line},
+						Source: matches[0].id, Target: override.id, Kind: "dispatch",
 					})
 					existing[key] = true
 				}

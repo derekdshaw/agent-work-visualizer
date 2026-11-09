@@ -7,7 +7,6 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -93,17 +92,6 @@ type goCall struct {
 	receiverType string
 }
 
-var goBuiltins = map[string]bool{
-	"append": true, "bool": true, "byte": true, "cap": true, "clear": true, "close": true,
-	"comparable": true, "complex": true, "complex64": true, "complex128": true, "copy": true,
-	"delete": true, "error": true, "false": true, "float32": true, "float64": true,
-	"imag": true, "int": true, "int8": true, "int16": true, "int32": true, "int64": true,
-	"iota": true, "len": true, "make": true, "max": true, "min": true, "new": true,
-	"nil": true, "panic": true, "print": true, "println": true, "real": true, "recover": true,
-	"rune": true, "string": true, "true": true, "uint": true, "uint8": true, "uint16": true,
-	"uint32": true, "uint64": true, "uintptr": true,
-}
-
 func (a *analysis) analyzeGoFile(path string) error {
 	source, err := os.ReadFile(path)
 	if err != nil {
@@ -129,9 +117,7 @@ func (a *analysis) analyzeGoFile(path string) error {
 		packageName: packageName,
 	}
 	a.files[relative] = state
-	a.graph.Files = append(a.graph.Files, callgraph.File{Path: relative, Module: state.module, Language: "go"})
 	a.registerGoPackage(path, relative, state)
-	a.graph.Stats.Files++
 	a.walkGo(root, source, relative, state, "", "", "")
 	return nil
 }
@@ -295,7 +281,6 @@ func (a *analysis) walkGo(
 	case "call_expression":
 		function := node.ChildByFieldName("function")
 		if function != nil {
-			a.graph.Stats.Calls++
 			a.calls = append(a.calls, goCall{
 				caller:       parentID,
 				expression:   strings.TrimSpace(function.Utf8Text(source)),
@@ -391,14 +376,10 @@ func (a *analysis) collectGoFunction(
 		File:          file,
 		Directory:     filepath.ToSlash(filepath.Dir(file)),
 		Line:          point.Row + 1,
-		Column:        point.Column + 1,
 		EndLine:       end.Row + 1,
-		Signature:     strings.TrimSpace(string(source[node.StartByte():body.StartByte()])),
-		Source:        node.Utf8Text(source),
 		Class:         receiverType,
 		Language:      "go",
 		Kind:          "function",
-		Parameters:    goParameters(parameters, source),
 	}
 	if function.Directory == "." {
 		function.Directory = ""
@@ -406,27 +387,11 @@ func (a *analysis) collectGoFunction(
 	if receiverType != "" {
 		function.Kind = "method"
 	}
-	if receiverType == "" && name == "init" {
-		function.Entrypoint = true
-		function.EntryKind = "init"
-	} else if state.packageName == "main" && receiverType == "" && name == "main" {
-		function.Entrypoint = true
-		function.EntryKind = "main"
-	}
 	a.graph.Nodes = append(a.graph.Nodes, function)
 	a.nodesByID[function.ID] = &a.graph.Nodes[len(a.graph.Nodes)-1]
-	a.graph.Stats.Definitions++
 	for index := uint(0); index < body.NamedChildCount(); index++ {
 		a.walkGo(body.NamedChild(index), source, file, state, function.ID, receiverName, receiverType)
 	}
-}
-
-func goParameters(parameters *tree_sitter.Node, source []byte) []string {
-	var values []string
-	for index := uint(0); index < parameters.NamedChildCount(); index++ {
-		values = append(values, strings.TrimSpace(parameters.NamedChild(index).Utf8Text(source)))
-	}
-	return values
 }
 
 func (a *analysis) resolveGoCalls() {
@@ -438,39 +403,19 @@ func (a *analysis) resolveGoCalls() {
 			byQualified[function.QualifiedName] = function
 		}
 	}
-	edges := make(map[string]*callgraph.Edge)
-	lineSets := make(map[string]map[uint]bool)
+	edges := make(map[string]bool)
 	for _, call := range a.calls {
 		target := a.resolveGoCall(call, byQualified)
-		if target == nil {
-			if call.caller != "" {
-				a.graph.Unresolved = append(a.graph.Unresolved, callgraph.UnresolvedCall{
-					Caller: call.caller, Expression: call.expression, File: call.file, Line: call.line,
-					Category: a.goUnresolvedCategory(call), Language: "go",
-				})
-			}
-			continue
-		}
-		if call.caller == "" {
+		if target == nil || call.caller == "" {
 			continue
 		}
 		key := call.caller + "\x00" + target.ID + "\x00call"
-		if edges[key] == nil {
-			edges[key] = &callgraph.Edge{Source: call.caller, Target: target.ID, Kind: "call"}
-			lineSets[key] = make(map[uint]bool)
+		if edges[key] {
+			continue
 		}
-		edges[key].Count++
-		lineSets[key][call.line] = true
-		a.graph.Stats.Resolved++
+		edges[key] = true
+		a.graph.Edges = append(a.graph.Edges, callgraph.Edge{Source: call.caller, Target: target.ID, Kind: "call"})
 	}
-	for key, edge := range edges {
-		for line := range lineSets[key] {
-			edge.Lines = append(edge.Lines, line)
-		}
-		sort.Slice(edge.Lines, func(i, j int) bool { return edge.Lines[i] < edge.Lines[j] })
-		a.graph.Edges = append(a.graph.Edges, *edge)
-	}
-	a.graph.Stats.Unresolved = len(a.graph.Unresolved)
 }
 
 func (a *analysis) resolveGoCall(call goCall, byQualified map[string]*callgraph.Function) *callgraph.Function {
@@ -526,18 +471,4 @@ func (a *analysis) importName(goImport goImport) string {
 		return imported.packageName
 	}
 	return filepath.Base(goImport.path)
-}
-
-func (a *analysis) goUnresolvedCategory(call goCall) string {
-	if goBuiltins[call.expression] {
-		return "builtin"
-	}
-	state := a.files[call.file]
-	root := strings.Split(call.expression, ".")[0]
-	for _, goImport := range state.imports {
-		if goImport.alias == "." || a.importName(goImport) == root {
-			return "external"
-		}
-	}
-	return "dynamic"
 }

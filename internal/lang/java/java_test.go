@@ -11,7 +11,7 @@ import (
 	"github.com/derekdshaw/agent-work-visualizer/internal/lang/python"
 )
 
-func TestAnalyzeJavaResolutionEntrypointsAndMixedLanguages(t *testing.T) {
+func TestAnalyzeJavaResolutionAndMixedLanguages(t *testing.T) {
 	root := t.TempDir()
 	langtest.WriteFixture(t, root, "src/main/java/com/example/Base.java", `
 package com.example;
@@ -111,11 +111,8 @@ def helper():
 	if err != nil {
 		t.Fatal(err)
 	}
-	if graph.Stats.Files != 5 {
-		t.Fatalf("files = %d, want 5", graph.Stats.Files)
-	}
 	main := langtest.FindFunction(t, graph, "com.example.App.main(String[])")
-	if !main.Entrypoint || main.EntryKind != "main" || main.Language != "java" || main.Kind != "method" {
+	if main.Language != "java" || main.Kind != "method" {
 		t.Fatalf("Java main metadata = %+v", *main)
 	}
 	constructor := langtest.FindFunction(t, graph, "com.example.Helper.<init>(String)")
@@ -124,23 +121,18 @@ def helper():
 	}
 	langtest.FindFunction(t, graph, "com.example.Item.<init>(String)")
 	langtest.FindFunction(t, graph, "com.example.Flags.value()")
-	langtest.AssertEdge(t, graph, "com.example.Helper.<init>(String)", "com.example.Base.<init>(String)", "call", 1)
-	langtest.AssertEdge(t, graph, "com.example.App.main(String[])", "com.example.Helper.<init>(String)", "call", 1)
-	langtest.AssertEdge(t, graph, "com.example.App.main(String[])", "com.example.Helper.clean(String)", "call", 1)
-	langtest.AssertEdge(t, graph, "com.example.App.main(String[])", "com.example.Helper.parse(String)", "call", 1)
-	langtest.AssertEdge(t, graph, "com.example.App.main(String[])", "com.example.Base.inherited(String)", "call", 1)
-	langtest.AssertEdge(t, graph, "com.example.App.run(int)", "com.example.Helper.parse(int)", "call", 1)
-	langtest.AssertEdge(t, graph, "com.example.App.callback()", "com.example.Helper.parse(String)", "call", 1)
-	langtest.AssertEdge(t, graph, "com.example.Item.<init>(String)", "com.example.Helper.clean(String)", "call", 1)
-	langtest.AssertEdge(t, graph, "com.use.Use.run()", "com.example.Helper.<init>(String)", "call", 1)
-	langtest.AssertEdge(t, graph, "com.use.Use.run()", "com.example.Helper.clean(String)", "call", 1)
-	langtest.AssertEdge(t, graph, "com.use.Use.run()", "com.example.Helper.parse(String)", "call", 1)
-	langtest.AssertEdge(t, graph, "same.main", "same.helper", "call", 1)
-	if !slices.ContainsFunc(graph.Unresolved, func(call callgraph.UnresolvedCall) bool {
-		return call.Language == "java" && call.Expression == "value.trim()" && call.Category == "builtin"
-	}) {
-		t.Fatal("Java runtime call was not retained as a language-tagged unresolved call")
-	}
+	langtest.AssertEdge(t, graph, "com.example.Helper.<init>(String)", "com.example.Base.<init>(String)", "call")
+	langtest.AssertEdge(t, graph, "com.example.App.main(String[])", "com.example.Helper.<init>(String)", "call")
+	langtest.AssertEdge(t, graph, "com.example.App.main(String[])", "com.example.Helper.clean(String)", "call")
+	langtest.AssertEdge(t, graph, "com.example.App.main(String[])", "com.example.Helper.parse(String)", "call")
+	langtest.AssertEdge(t, graph, "com.example.App.main(String[])", "com.example.Base.inherited(String)", "call")
+	langtest.AssertEdge(t, graph, "com.example.App.run(int)", "com.example.Helper.parse(int)", "call")
+	langtest.AssertEdge(t, graph, "com.example.App.callback()", "com.example.Helper.parse(String)", "call")
+	langtest.AssertEdge(t, graph, "com.example.Item.<init>(String)", "com.example.Helper.clean(String)", "call")
+	langtest.AssertEdge(t, graph, "com.use.Use.run()", "com.example.Helper.<init>(String)", "call")
+	langtest.AssertEdge(t, graph, "com.use.Use.run()", "com.example.Helper.clean(String)", "call")
+	langtest.AssertEdge(t, graph, "com.use.Use.run()", "com.example.Helper.parse(String)", "call")
+	langtest.AssertEdge(t, graph, "same.main", "same.helper", "call")
 }
 
 func TestJavaAmbiguousOverloadRemainsUnresolved(t *testing.T) {
@@ -165,11 +157,6 @@ class Overloads {
 	}) {
 		t.Fatal("ambiguous overload was resolved")
 	}
-	if !slices.ContainsFunc(graph.Unresolved, func(call callgraph.UnresolvedCall) bool {
-		return call.Expression == "use(value)" && call.Language == "java"
-	}) {
-		t.Fatal("ambiguous overload was not retained as unresolved")
-	}
 }
 
 func TestJavaTestAndGeneratedExclusions(t *testing.T) {
@@ -189,16 +176,25 @@ class Generated {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if graph.Stats.Files != 1 || graph.Stats.Definitions != 1 {
-		t.Fatalf("stats = %+v, want one non-test, non-generated Java source", graph.Stats)
+	defined := func(graph *callgraph.Graph, qualifiedName string) bool {
+		return slices.ContainsFunc(graph.Nodes, func(function callgraph.Function) bool {
+			return function.QualifiedName == qualifiedName
+		})
+	}
+	langtest.FindFunction(t, graph, "Visible.visible()")
+	if defined(graph, "VisibleTest.test()") || defined(graph, "generated.Generated.omitted()") {
+		t.Fatal("a test or generated Java source was analyzed")
 	}
 
 	included, err := langtest.Analyze(root, analyzer.Options{IncludeTests: true}, New(), python.New())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if included.Stats.Files != 2 {
-		t.Fatalf("files with tests = %d, want 2", included.Stats.Files)
+	if !defined(included, "VisibleTest.test()") {
+		t.Fatal("the test source was not analyzed with IncludeTests")
+	}
+	if defined(included, "generated.Generated.omitted()") {
+		t.Fatal("a generated Java source was analyzed with IncludeTests")
 	}
 }
 
@@ -269,6 +265,6 @@ class Callback {
 	}) {
 		t.Fatal("override dispatch edge was not created")
 	}
-	langtest.AssertEdge(t, graph, "UsesGenerated.invoke()", "AbstractGenerated.execute()", "call", 1)
-	langtest.AssertEdge(t, graph, "Callback.register()", "Callback.target(String)", "dispatch", 1)
+	langtest.AssertEdge(t, graph, "UsesGenerated.invoke()", "AbstractGenerated.execute()", "call")
+	langtest.AssertEdge(t, graph, "Callback.register()", "Callback.target(String)", "dispatch")
 }

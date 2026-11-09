@@ -71,10 +71,7 @@ func (f *fakeLanguage) Analyze(root string, files []string) (*callgraph.Graph, e
 		if err != nil {
 			return nil, err
 		}
-		graph.Files = append(graph.Files, callgraph.File{Path: filepath.ToSlash(relative), Language: f.name})
 		graph.Nodes = append(graph.Nodes, callgraph.Function{ID: f.name + ":" + filepath.ToSlash(relative)})
-		graph.Stats.Files++
-		graph.Stats.Definitions++
 	}
 	return graph, nil
 }
@@ -101,9 +98,6 @@ func TestAnalyzeRoutesFilesByExtensionAndMergesGraphs(t *testing.T) {
 	}
 	if !slices.Equal(relativePaths(t, root, two.received), []string{"c.two"}) {
 		t.Fatalf("language two received %v", two.received)
-	}
-	if graph.Stats.Files != 3 || graph.Stats.Definitions != 3 {
-		t.Fatalf("stats = %+v, want 3 files and 3 definitions", graph.Stats)
 	}
 	var ids []string
 	for _, node := range graph.Nodes {
@@ -257,7 +251,7 @@ func TestEmptyGraphListsEncodeAsArrays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{`"nodes":[]`, `"edges":[]`, `"unresolved":[]`} {
+	for _, field := range []string{`"nodes":[]`, `"edges":[]`} {
 		if !strings.Contains(string(data), field) {
 			t.Errorf("graph JSON lacks %s: %s", field, data)
 		}

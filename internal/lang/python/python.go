@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
-	"sort"
 	"strings"
 
 	"github.com/derekdshaw/agent-work-visualizer/internal/callgraph"
@@ -41,10 +39,9 @@ func (Language) IsTestFile(relativePath string) bool {
 
 func (Language) Analyze(root string, files []string) (*callgraph.Graph, error) {
 	a := &analysis{
-		root:        root,
-		nodesByID:   make(map[string]*callgraph.Function),
-		files:       make(map[string]*fileState),
-		flowClasses: make(map[string]bool),
+		root:      root,
+		nodesByID: make(map[string]*callgraph.Function),
+		files:     make(map[string]*fileState),
 	}
 	if err := langutil.EachFile(root, files, a.analyzePythonFile); err != nil {
 		return nil, err
@@ -54,12 +51,11 @@ func (Language) Analyze(root string, files []string) (*callgraph.Graph, error) {
 }
 
 type analysis struct {
-	root        string
-	graph       callgraph.Graph
-	nodesByID   map[string]*callgraph.Function
-	files       map[string]*fileState
-	rawCalls    []rawCall
-	flowClasses map[string]bool
+	root      string
+	graph     callgraph.Graph
+	nodesByID map[string]*callgraph.Function
+	files     map[string]*fileState
+	rawCalls  []rawCall
 }
 
 type importRef struct {
@@ -83,41 +79,6 @@ type rawCall struct {
 	file       string
 	line       uint
 	kind       string
-	mainGuard  bool
-}
-
-var pythonBuiltins = map[string]bool{
-	"BaseException": true, "BaseExceptionGroup": true, "Exception": true, "ExceptionGroup": true,
-	"ArithmeticError": true, "AssertionError": true, "AttributeError": true, "BufferError": true,
-	"EOFError": true, "FloatingPointError": true, "GeneratorExit": true, "ImportError": true,
-	"IndexError": true, "KeyError": true, "KeyboardInterrupt": true, "LookupError": true,
-	"MemoryError": true, "ModuleNotFoundError": true, "NameError": true, "NotImplementedError": true,
-	"OSError": true, "OverflowError": true, "RecursionError": true, "ReferenceError": true,
-	"RuntimeError": true, "StopAsyncIteration": true, "StopIteration": true, "SyntaxError": true,
-	"IndentationError": true, "TabError": true,
-	"SystemError": true, "SystemExit": true, "TypeError": true, "UnboundLocalError": true,
-	"UnicodeError": true, "UnicodeDecodeError": true, "UnicodeEncodeError": true,
-	"UnicodeTranslateError": true, "ValueError": true, "ZeroDivisionError": true, "BlockingIOError": true,
-	"BrokenPipeError": true, "ChildProcessError": true, "ConnectionAbortedError": true,
-	"ConnectionError": true, "ConnectionRefusedError": true, "ConnectionResetError": true,
-	"FileExistsError": true, "FileNotFoundError": true, "InterruptedError": true,
-	"IsADirectoryError": true, "NotADirectoryError": true, "PermissionError": true,
-	"ProcessLookupError": true, "TimeoutError": true, "Warning": true, "BytesWarning": true,
-	"DeprecationWarning": true, "EncodingWarning": true, "FutureWarning": true, "ImportWarning": true,
-	"PendingDeprecationWarning": true, "ResourceWarning": true, "RuntimeWarning": true,
-	"SyntaxWarning": true, "UnicodeWarning": true, "UserWarning": true, "__import__": true,
-	"abs": true, "aiter": true, "all": true, "anext": true,
-	"any": true, "ascii": true, "bin": true, "bool": true, "breakpoint": true, "bytearray": true,
-	"bytes": true, "callable": true, "chr": true, "classmethod": true, "compile": true, "complex": true,
-	"delattr": true, "dict": true, "dir": true, "divmod": true, "enumerate": true, "eval": true,
-	"exec": true, "filter": true, "float": true, "format": true, "frozenset": true, "getattr": true,
-	"globals": true, "hasattr": true, "hash": true, "help": true, "hex": true, "id": true,
-	"input": true, "int": true, "isinstance": true, "issubclass": true, "iter": true, "len": true,
-	"list": true, "locals": true, "map": true, "max": true, "memoryview": true, "min": true,
-	"next": true, "object": true, "oct": true, "open": true, "ord": true, "pow": true,
-	"print": true, "property": true, "range": true, "repr": true, "reversed": true, "round": true,
-	"set": true, "setattr": true, "slice": true, "sorted": true, "staticmethod": true, "str": true,
-	"sum": true, "super": true, "tuple": true, "type": true, "vars": true, "zip": true,
 }
 
 func (a *analysis) analyzePythonFile(path string) error {
@@ -142,9 +103,7 @@ func (a *analysis) analyzePythonFile(path string) error {
 		imports: make(map[string]importRef),
 	}
 	a.files[relative] = state
-	a.graph.Files = append(a.graph.Files, callgraph.File{Path: relative, Module: state.module, Language: "python"})
-	a.graph.Stats.Files++
-	a.walk(root, source, relative, state, nil, "", nil, false)
+	a.walk(root, source, relative, state, nil, "", nil)
 	return nil
 }
 
@@ -166,7 +125,6 @@ func (a *analysis) walk(
 	class *classState,
 	parentID string,
 	decorators []string,
-	mainGuard bool,
 ) {
 	switch node.Kind() {
 	case "decorated_definition":
@@ -177,14 +135,14 @@ func (a *analysis) walk(
 			if child.Kind() == "decorator" {
 				names = append(names, decoratorName(child.Utf8Text(source)))
 				for j := uint(0); j < child.NamedChildCount(); j++ {
-					a.walk(child.NamedChild(j), source, file, state, class, parentID, nil, mainGuard)
+					a.walk(child.NamedChild(j), source, file, state, class, parentID, nil)
 				}
 			} else {
 				definition = child
 			}
 		}
 		if definition != nil {
-			a.walk(definition, source, file, state, class, parentID, names, mainGuard)
+			a.walk(definition, source, file, state, class, parentID, names)
 		}
 		return
 	case "import_statement", "import_from_statement":
@@ -197,38 +155,26 @@ func (a *analysis) walk(
 		}
 		name := nameNode.Utf8Text(source)
 		classContext := &classState{name: name}
-		isFlow := strings.Contains(
-			string(source[node.StartByte():min(len(source), int(body.StartByte()))]),
-			"FlowSpec",
-		)
-		if isFlow {
-			a.flowClasses[langutil.Qualified(state.module, name)] = true
-		}
 		for i := uint(0); i < node.NamedChildCount(); i++ {
 			child := node.NamedChild(i)
 			if child.Id() != nameNode.Id() && child.Id() != body.Id() {
-				a.walk(child, source, file, state, class, parentID, nil, mainGuard)
+				a.walk(child, source, file, state, class, parentID, nil)
 			}
 		}
 		for i := uint(0); i < body.NamedChildCount(); i++ {
-			a.walk(body.NamedChild(i), source, file, state, classContext, "", nil, mainGuard)
+			a.walk(body.NamedChild(i), source, file, state, classContext, "", nil)
 		}
 		return
 	case "function_definition":
 		a.collectFunction(node, source, file, state, class, parentID, decorators)
 		return
-	case "if_statement":
-		condition := node.ChildByFieldName("condition")
-		if condition != nil && isMainGuard(condition.Utf8Text(source)) {
-			mainGuard = true
-		}
 	}
 
 	if node.Kind() == "call" {
-		a.collectCall(node, source, file, parentID, mainGuard)
+		a.collectCall(node, source, file, parentID)
 	}
 	for i := uint(0); i < node.NamedChildCount(); i++ {
-		a.walk(node.NamedChild(i), source, file, state, class, parentID, decorators, mainGuard)
+		a.walk(node.NamedChild(i), source, file, state, class, parentID, decorators)
 	}
 }
 
@@ -272,13 +218,9 @@ func (a *analysis) collectFunction(
 		File:          file,
 		Directory:     filepath.ToSlash(filepath.Dir(file)),
 		Line:          point.Row + 1,
-		Column:        point.Column + 1,
 		EndLine:       end.Row + 1,
-		Signature:     name + parameters.Utf8Text(source),
-		Source:        node.Utf8Text(source),
 		Decorators:    decorators,
 		Parent:        parentID,
-		Async:         node.Child(0) != nil && node.Child(0).Kind() == "async",
 		Language:      "python",
 		Kind:          "function",
 	}
@@ -289,24 +231,17 @@ func (a *analysis) collectFunction(
 		function.Class = class.name
 		function.Kind = "method"
 	}
-	for _, decorator := range decorators {
-		if decorator == "step" {
-			function.Entrypoint = true
-			function.EntryKind = "metaflow-step"
-		}
-	}
 	a.graph.Nodes = append(a.graph.Nodes, function)
 	a.nodesByID[id] = &a.graph.Nodes[len(a.graph.Nodes)-1]
-	a.graph.Stats.Definitions++
 
 	for i := uint(0); i < node.NamedChildCount(); i++ {
 		child := node.NamedChild(i)
 		if child.Id() != nameNode.Id() && child.Id() != body.Id() {
-			a.walk(child, source, file, state, class, id, nil, false)
+			a.walk(child, source, file, state, class, id, nil)
 		}
 	}
 	for i := uint(0); i < body.NamedChildCount(); i++ {
-		a.walk(body.NamedChild(i), source, file, state, class, id, nil, false)
+		a.walk(body.NamedChild(i), source, file, state, class, id, nil)
 	}
 }
 
@@ -390,13 +325,11 @@ func (a *analysis) collectCall(
 	source []byte,
 	file string,
 	caller string,
-	mainGuard bool,
 ) {
 	function := node.ChildByFieldName("function")
 	if function == nil {
 		return
 	}
-	a.graph.Stats.Calls++
 	expression := strings.TrimSpace(function.Utf8Text(source))
 	line := node.StartPosition().Row + 1
 	if (expression == "self.next" || expression == "cls.next") && caller != "" {
@@ -416,14 +349,8 @@ func (a *analysis) collectCall(
 		return
 	}
 	a.rawCalls = append(a.rawCalls, rawCall{
-		caller: caller, expression: expression, file: file, line: line, kind: "call", mainGuard: mainGuard,
+		caller: caller, expression: expression, file: file, line: line, kind: "call",
 	})
-}
-
-func isMainGuard(text string) bool {
-	compact := strings.ReplaceAll(strings.ReplaceAll(text, " ", ""), "'", "\"")
-	return strings.Contains(compact, "__name__==\"__main__\"") ||
-		strings.Contains(compact, "\"__main__\"==__name__")
 }
 
 func (a *analysis) resolveCalls() {
@@ -441,60 +368,21 @@ func (a *analysis) resolveCalls() {
 		}
 	}
 	edges := make(map[string]*callgraph.Edge)
-	lineSets := make(map[string]map[uint]bool)
 	for _, call := range a.rawCalls {
 		target := a.resolveCall(call, byQualified, byModuleName)
 		if target == nil {
-			if call.caller != "" {
-				a.graph.Unresolved = append(a.graph.Unresolved, callgraph.UnresolvedCall{
-					Caller: call.caller, Expression: call.expression, File: call.file, Line: call.line,
-					Category: a.unresolvedCategory(call), Language: "python",
-				})
-			}
 			continue
-		}
-		if call.mainGuard {
-			target.Entrypoint = true
-			if target.EntryKind == "" {
-				target.EntryKind = "main"
-			}
 		}
 		if call.caller == "" {
 			continue
 		}
 		key := call.caller + "\x00" + target.ID + "\x00" + call.kind
-		edge := edges[key]
-		if edge == nil {
-			edge = &callgraph.Edge{Source: call.caller, Target: target.ID, Kind: call.kind}
+		if edges[key] == nil {
+			edge := &callgraph.Edge{Source: call.caller, Target: target.ID, Kind: call.kind}
 			edges[key] = edge
-			lineSets[key] = make(map[uint]bool)
-		}
-		edge.Count++
-		lineSets[key][call.line] = true
-		a.graph.Stats.Resolved++
-	}
-	for key, edge := range edges {
-		for line := range lineSets[key] {
-			edge.Lines = append(edge.Lines, line)
-		}
-		sort.Slice(edge.Lines, func(i, j int) bool { return edge.Lines[i] < edge.Lines[j] })
-		a.graph.Edges = append(a.graph.Edges, *edge)
-	}
-	a.graph.Stats.Unresolved = len(a.graph.Unresolved)
-}
-
-func (a *analysis) unresolvedCategory(call rawCall) string {
-	expression := strings.TrimSpace(call.expression)
-	if pythonBuiltins[expression] {
-		return "builtin"
-	}
-	root, _, _ := strings.Cut(expression, ".")
-	if state := a.files[call.file]; state != nil {
-		if _, imported := state.imports[root]; imported {
-			return "external"
+			a.graph.Edges = append(a.graph.Edges, *edge)
 		}
 	}
-	return "dynamic"
 }
 
 func (a *analysis) resolveCall(
@@ -534,9 +422,6 @@ func (a *analysis) resolveCall(
 		if target := byModuleName[langutil.Qualified(state.module, expression)]; target != nil {
 			return target
 		}
-		if a.flowClasses[langutil.Qualified(state.module, expression)] {
-			a.markFlowEntrypoints(state.module, expression)
-		}
 		return nil
 	}
 	parts := strings.Split(expression, ".")
@@ -552,15 +437,4 @@ func (a *analysis) resolveCall(
 		return target
 	}
 	return byQualified[expression]
-}
-
-func (a *analysis) markFlowEntrypoints(module string, class string) {
-	prefix := langutil.Qualified(module, class) + "."
-	for index := range a.graph.Nodes {
-		function := &a.graph.Nodes[index]
-		if strings.HasPrefix(function.QualifiedName, prefix) && slices.Contains(function.Decorators, "step") {
-			function.Entrypoint = true
-			function.EntryKind = "metaflow-step"
-		}
-	}
 }

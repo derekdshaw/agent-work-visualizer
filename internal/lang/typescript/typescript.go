@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/derekdshaw/agent-work-visualizer/internal/callgraph"
@@ -103,8 +102,6 @@ func (a *analysis) analyzeTypescriptFile(path string) error {
 		imports: make(map[string]string),
 	}
 	a.files[relative] = state
-	a.graph.Files = append(a.graph.Files, callgraph.File{Path: relative, Module: state.module, Language: "typescript"})
-	a.graph.Stats.Files++
 	a.walkTypescript(root, source, relative, state, "", "")
 	return nil
 }
@@ -166,7 +163,6 @@ func (a *analysis) walkTypescript(
 	case "call_expression":
 		function := node.ChildByFieldName("function")
 		if function != nil {
-			a.graph.Stats.Calls++
 			a.calls = append(a.calls, typescriptCall{
 				caller:     parentID,
 				expression: strings.TrimSpace(function.Utf8Text(source)),
@@ -177,7 +173,6 @@ func (a *analysis) walkTypescript(
 	case "new_expression":
 		constructor := node.ChildByFieldName("constructor")
 		if constructor != nil {
-			a.graph.Stats.Calls++
 			a.calls = append(a.calls, typescriptCall{
 				caller:      parentID,
 				expression:  strings.TrimSpace(constructor.Utf8Text(source)),
@@ -243,17 +238,12 @@ func (a *analysis) collectTypescriptFunction(
 		File:          file,
 		Directory:     filepath.ToSlash(filepath.Dir(file)),
 		Line:          point.Row + 1,
-		Column:        point.Column + 1,
 		EndLine:       end.Row + 1,
-		Signature:     signature,
-		Source:        sourceNode.Utf8Text(source),
 		Class:         class,
 		Parent:        parentID,
-		Async:         strings.Contains(signature, "async"),
 		Language:      "typescript",
 		Kind:          "function",
 		Modifiers:     typescriptModifiers(signature),
-		Parameters:    typescriptParameters(parameters, source),
 	}
 	if function.Directory == "." {
 		function.Directory = ""
@@ -266,7 +256,6 @@ func (a *analysis) collectTypescriptFunction(
 	}
 	a.graph.Nodes = append(a.graph.Nodes, function)
 	a.nodesByID[function.ID] = &a.graph.Nodes[len(a.graph.Nodes)-1]
-	a.graph.Stats.Definitions++
 	for i := uint(0); i < body.NamedChildCount(); i++ {
 		a.walkTypescript(body.NamedChild(i), source, file, state, class, function.ID)
 	}
@@ -280,20 +269,6 @@ func typescriptModifiers(signature string) []string {
 		}
 	}
 	return modifiers
-}
-
-func typescriptParameters(parameters *tree_sitter.Node, source []byte) []string {
-	if parameters == nil {
-		return nil
-	}
-	if parameters.Kind() != "formal_parameters" {
-		return []string{strings.TrimSpace(parameters.Utf8Text(source))}
-	}
-	var values []string
-	for i := uint(0); i < parameters.NamedChildCount(); i++ {
-		values = append(values, strings.TrimSpace(parameters.NamedChild(i).Utf8Text(source)))
-	}
-	return values
 }
 
 func collectTypescriptImport(text string, state *typescriptFile) {
@@ -354,39 +329,19 @@ func (a *analysis) resolveTypescriptCalls() {
 			byQualified[function.QualifiedName] = function
 		}
 	}
-	edges := make(map[string]*callgraph.Edge)
-	lineSets := make(map[string]map[uint]bool)
+	edges := make(map[string]bool)
 	for _, call := range a.calls {
 		target := a.resolveTypescriptCall(call, byQualified)
-		if target == nil {
-			if call.caller != "" {
-				a.graph.Unresolved = append(a.graph.Unresolved, callgraph.UnresolvedCall{
-					Caller: call.caller, Expression: call.expression, File: call.file, Line: call.line,
-					Category: a.typescriptUnresolvedCategory(call), Language: "typescript",
-				})
-			}
-			continue
-		}
-		if call.caller == "" {
+		if target == nil || call.caller == "" {
 			continue
 		}
 		key := call.caller + "\x00" + target.ID + "\x00call"
-		if edges[key] == nil {
-			edges[key] = &callgraph.Edge{Source: call.caller, Target: target.ID, Kind: "call"}
-			lineSets[key] = make(map[uint]bool)
+		if edges[key] {
+			continue
 		}
-		edges[key].Count++
-		lineSets[key][call.line] = true
-		a.graph.Stats.Resolved++
+		edges[key] = true
+		a.graph.Edges = append(a.graph.Edges, callgraph.Edge{Source: call.caller, Target: target.ID, Kind: "call"})
 	}
-	for key, edge := range edges {
-		for line := range lineSets[key] {
-			edge.Lines = append(edge.Lines, line)
-		}
-		sort.Slice(edge.Lines, func(i, j int) bool { return edge.Lines[i] < edge.Lines[j] })
-		a.graph.Edges = append(a.graph.Edges, *edge)
-	}
-	a.graph.Stats.Unresolved = len(a.graph.Unresolved)
 }
 
 func (a *analysis) resolveTypescriptCall(call typescriptCall, byQualified map[string]*callgraph.Function) *callgraph.Function {
@@ -447,12 +402,4 @@ func (a *analysis) resolveTypescriptCall(call typescriptCall, byQualified map[st
 		return target
 	}
 	return byQualified[expression]
-}
-
-func (a *analysis) typescriptUnresolvedCategory(call typescriptCall) string {
-	root := strings.Split(call.expression, ".")[0]
-	if state := a.files[call.file]; state != nil && state.imports[root] != "" {
-		return "external"
-	}
-	return "dynamic"
 }

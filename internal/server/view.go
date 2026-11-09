@@ -44,6 +44,7 @@ type rootView struct {
 	mu       sync.RWMutex
 	version  int
 	payload  []byte
+	files    map[string]bool
 	sessions map[string]bool
 	controls map[string]control
 	sequence int
@@ -64,6 +65,7 @@ func newView(root string, branch string, sessions string) *rootView {
 		root:     root,
 		branch:   branch,
 		log:      session.NewLog(sessions, session.NewName(time.Now()), root, branch),
+		files:    make(map[string]bool),
 		controls: make(map[string]control),
 		waiters:  make(map[chan struct{}]bool),
 	}
@@ -86,6 +88,7 @@ func openRoot(ctx context.Context, workers *sync.WaitGroup, a *analyzer.Analyzer
 	// An agent reads and edits tests, so the live graph includes test files.
 	// Without them, the viewer has no node to mark for a test callable.
 	options := analyzer.Options{IncludeTests: true}
+	started := time.Now()
 	graph, err := a.Analyze(root, options)
 	if err != nil {
 		return nil, err
@@ -106,7 +109,7 @@ func openRoot(ctx context.Context, workers *sync.WaitGroup, a *analyzer.Analyzer
 	workers.Add(3)
 	go func() {
 		defer workers.Done()
-		view.watch(ctx, a, watcher, mapper, edits)
+		view.watch(ctx, a, watcher, mapper, edits, started)
 	}()
 	go func() {
 		defer workers.Done()
@@ -145,7 +148,19 @@ func (v *rootView) setGraph(graph *callgraph.Graph) (int, error) {
 		return 0, fmt.Errorf("encode graph payload: %w", err)
 	}
 	v.version, v.payload = version, payload
+	// Keep the files that are in files already, because the log can name them.
+	for _, node := range graph.Nodes {
+		v.files[node.File] = true
+	}
 	return version, nil
+}
+
+// knows reports whether a graph node is in the file at path, or an event of
+// the log names it.
+func (v *rootView) knows(path string) bool {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return v.files[path]
 }
 
 // graphPayload returns the encoded graph payload.
@@ -206,6 +221,13 @@ func (v *rootView) appendEvents(events []session.Event) {
 		return
 	}
 	v.log.Append(events)
+	v.mu.Lock()
+	for _, event := range events {
+		if event.Path != "" {
+			v.files[event.Path] = true
+		}
+	}
+	v.mu.Unlock()
 	v.wake()
 }
 
@@ -288,8 +310,9 @@ func (v *rootView) serveEvents(w http.ResponseWriter, r *http.Request) {
 
 // watch polls transcripts and appends their events to the session log. After
 // a poll that found an edit to a source file, it signals edits without
-// blocking.
-func (v *rootView) watch(ctx context.Context, a *analyzer.Analyzer, watcher *transcript.Watcher, mapper *activity.Mapper, edits chan<- struct{}) {
+// blocking. It ignores edits that occur before since, because the analysis
+// already contains them.
+func (v *rootView) watch(ctx context.Context, a *analyzer.Analyzer, watcher *transcript.Watcher, mapper *activity.Mapper, edits chan<- struct{}, since time.Time) {
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 	for polls := 0; ; polls++ {
@@ -307,7 +330,7 @@ func (v *rootView) watch(ctx context.Context, a *analyzer.Analyzer, watcher *tra
 		edited := false
 		for _, mapped := range mapper.Map(toolEvents) {
 			events = append(events, session.FromActivity(mapped))
-			if mapped.Kind == "edit" && a.Supports(mapped.File) {
+			if mapped.Kind == "edit" && a.Supports(mapped.File) && mapped.Time.After(since) {
 				edited = true
 			}
 		}

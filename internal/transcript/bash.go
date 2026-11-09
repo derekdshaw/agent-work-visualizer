@@ -31,15 +31,29 @@ type bashRead struct {
 // which names no file that the parser can know.
 const nonLiteral = "\x00"
 
+// stripAssignments removes the leading variable assignments of a command.
+func stripAssignments(words []string) []string {
+	for len(words) > 0 && isAssignment(words[0]) {
+		words = words[1:]
+	}
+	return words
+}
+
+// shellCommand is one simple command of a Bash command line. piped is true
+// when the output of the command goes into a pipe.
+type shellCommand struct {
+	words []string
+	piped bool
+}
+
 // bashReads returns the files under no particular root that command reads,
 // resolving relative paths against cwd. It recognizes only commands that
 // name regular files that exist; everything else reads nothing.
 func bashReads(command string, cwd string) []bashRead {
 	var reads []bashRead
-	for _, words := range shellCommands(command) {
-		for len(words) > 0 && isAssignment(words[0]) {
-			words = words[1:]
-		}
+	commands := shellCommands(command)
+	for index, current := range commands {
+		words := stripAssignments(current.words)
 		if len(words) == 0 {
 			continue
 		}
@@ -63,10 +77,48 @@ func bashReads(command string, cwd string) []bashRead {
 		}
 		switch name {
 		case "cat", "nl", "less", "more", "bat", "batcat":
-			for _, read := range files() {
-				read.ranges = [][2]int{{1, 0}}
-				reads = append(reads, read)
+			found := files()
+			if !current.piped {
+				for _, read := range found {
+					read.ranges = [][2]int{{1, 0}}
+					reads = append(reads, read)
+				}
+				continue
 			}
+			// The pipe shows the agent only the lines that the next command
+			// prints.
+			if len(found) != 1 || index+1 >= len(commands) {
+				continue
+			}
+			read := found[0]
+			next := stripAssignments(commands[index+1].words)
+			if len(next) == 0 {
+				continue
+			}
+			switch filepath.Base(next[0]) {
+			case "head":
+				count := lineOption(next[1:], 10)
+				read.ranges = [][2]int{{1, count}}
+				if count <= 0 {
+					read.ranges = [][2]int{{1, 0}}
+				}
+			case "tail":
+				count, from := tailOption(next[1:])
+				if from > 0 {
+					read.ranges = [][2]int{{from, 0}}
+				} else {
+					read.last = count
+				}
+			case "sed":
+				ranges, ok := sedPrintRanges(next[1:])
+				if !ok {
+					continue
+				}
+				read.ranges = ranges
+			default:
+				continue
+			}
+			reads = append(reads, read)
 		case "head":
 			count := lineOption(args, 10)
 			for _, read := range files() {
@@ -328,12 +380,13 @@ func sedAddress(address string) int {
 	return number
 }
 
-// shellCommands splits a Bash command into the words of its simple commands.
-// It handles quotes, escapes, comments, the operators that separate commands,
-// redirections, whose targets it drops, and heredocs, whose bodies it skips.
-// A word with an expansion or a glob becomes nonLiteral.
-func shellCommands(command string) [][]string {
-	var commands [][]string
+// shellCommands splits a Bash command into its simple commands and marks the
+// commands whose output goes into a pipe. It handles quotes, escapes,
+// comments, the operators that separate commands, redirections, whose targets
+// it drops, and heredocs, whose bodies it skips. A word with an expansion or
+// a glob becomes nonLiteral.
+func shellCommands(command string) []shellCommand {
+	var commands []shellCommand
 	var words []string
 	var word strings.Builder
 	inWord, literal, dropNext := false, true, false
@@ -354,10 +407,10 @@ func shellCommands(command string) [][]string {
 		word.Reset()
 		inWord, literal = false, true
 	}
-	endCommand := func() {
+	endCommand := func(piped bool) {
 		endWord()
 		if len(words) > 0 {
-			commands = append(commands, words)
+			commands = append(commands, shellCommand{words: words, piped: piped})
 		}
 		words = nil
 	}
@@ -396,7 +449,7 @@ func shellCommands(command string) [][]string {
 			}
 			i--
 		case c == '\n':
-			endCommand()
+			endCommand(false)
 			// A heredoc body starts on the next line and ends at a line that
 			// holds only its delimiter.
 			for _, delimiter := range heredocs {
@@ -415,8 +468,18 @@ func shellCommands(command string) [][]string {
 			heredocs = nil
 		case c == ' ' || c == '\t':
 			endWord()
-		case c == ';' || c == '|' || c == '&' || c == '(' || c == ')':
-			endCommand()
+		case c == '|':
+			if i+1 < len(runes) && runes[i+1] == '|' {
+				i++
+				endCommand(false)
+				continue
+			}
+			if i+1 < len(runes) && runes[i+1] == '&' {
+				i++
+			}
+			endCommand(true)
+		case c == ';' || c == '&' || c == '(' || c == ')':
+			endCommand(false)
 		case c == '<' && i+1 < len(runes) && runes[i+1] == '<':
 			endWord()
 			i += 2
@@ -459,7 +522,7 @@ func shellCommands(command string) [][]string {
 			word.WriteRune(c)
 		}
 	}
-	endCommand()
+	endCommand(false)
 	return commands
 }
 

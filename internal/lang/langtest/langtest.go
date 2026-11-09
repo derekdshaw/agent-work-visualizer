@@ -44,15 +44,12 @@ func FindFunction(t *testing.T, graph *callgraph.Graph, qualifiedName string) *c
 	return nil
 }
 
-func AssertEdge(t *testing.T, graph *callgraph.Graph, source string, target string, kind string, count int) {
+func AssertEdge(t *testing.T, graph *callgraph.Graph, source string, target string, kind string) {
 	t.Helper()
 	sourceID := FindFunction(t, graph, source).ID
 	targetID := FindFunction(t, graph, target).ID
 	for _, edge := range graph.Edges {
 		if edge.Source == sourceID && edge.Target == targetID && edge.Kind == kind {
-			if edge.Count != count {
-				t.Fatalf("%s -> %s count = %d, want %d", source, target, edge.Count, count)
-			}
 			return
 		}
 	}

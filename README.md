@@ -209,8 +209,7 @@ Python analysis recognizes:
 - same-module and nested functions;
 - imported, aliased, and module-qualified functions;
 - `self` and `cls` method calls;
-- `__main__`-guarded entrypoints;
-- Metaflow `@step` entrypoints and `self.next(...)` transitions.
+- Metaflow `self.next(...)` transitions.
 
 Go analysis recognizes:
 
@@ -219,8 +218,6 @@ Go analysis recognizes:
   nearest `go.mod` module path;
 - same-package calls, calls into imported local packages, receiver calls, and
   method expressions when the source identifies one target;
-- top-level `main` functions in `package main` and package `init` functions as
-  entrypoints;
 - Go 1.26 `new(expression)` calls, which the Tree-sitter Go grammar does not
   parse yet.
 
@@ -231,8 +228,7 @@ Java analysis recognizes:
   annotation members;
 - local, field, static, inherited, and constructor calls when the source makes
   one target uniquely identifiable;
-- calls inside lambdas as calls from the enclosing method;
-- `public static void main(String[])` entrypoints.
+- calls inside lambdas as calls from the enclosing method.
 
 Rust analysis recognizes:
 
@@ -243,8 +239,7 @@ Rust analysis recognizes:
   method calls;
 - `crate::` paths and calls into the other Cargo packages of the tree, found by
   the `[package]` name in each `Cargo.toml`, so calls between the crates of a
-  workspace resolve;
-- top-level `main` entrypoints.
+  workspace resolve.
 
 TypeScript analysis recognizes:
 
@@ -258,10 +253,10 @@ TypeScript analysis recognizes:
 Purple dispatch edges connect source-defined Java overrides to their resolved
 base methods.
 
-Repeated calls produce one edge with a count and distinct source lines. Calls
+Repeated calls produce one edge. Calls
 are never resolved across languages. Dynamic dispatch, callbacks, reflection,
 monkeypatching, dependency injection, calls into external packages, and
-ambiguous Java overloads remain explicitly unresolved. Java analysis does not
+ambiguous Java overloads stay unresolved, and the graph shows no edge for them. Java analysis does not
 read Maven, Gradle, JDK, bytecode, or classpath metadata. Rust analysis does not
 follow `pub use` re-exports, expand macros, or perform type inference.
 TypeScript analysis does not use a `tsconfig.json` or TypeScript type checker.
@@ -316,13 +311,12 @@ async functions, methods, decorators, nested functions, lambdas,
 comprehensions, match statements, exception groups, import forms, Metaflow
 transitions, syntax rejection, and deterministic ordering.
 Java fixtures cover packages, imports, overloads, constructors, inheritance,
-records, lambdas, entrypoints, exclusions, unresolved calls, mixed-language
+records, lambdas, exclusions, ambiguous overloads, mixed-language
 trees, and syntax rejection.
 Rust fixtures cover imports, aliases, nested modules, free and implementation
-methods, entrypoints, exclusions, call resolution, and syntax rejection.
+methods, exclusions, call resolution, and syntax rejection.
 TypeScript fixtures cover named and default imports, declarations, assigned
 functions, classes, constructors, async functions, TSX, exclusions, call
 resolution, and syntax rejection.
 Go fixtures cover generic functions, receiver methods, standard, aliased, and
-dot imports, package-local call resolution, entrypoints, exclusions, unresolved
-external calls, and syntax rejection.
+dot imports, package-local call resolution, exclusions, and syntax rejection.

@@ -40,8 +40,10 @@ It maps each file path (relative to `root`) to its package path. The rule:
    `root` itself. For each directory that holds a manifest, also look in
    the other subdirectories of its parent directory. A member of a
    workspace can hold no source file, so the files alone do not show it.
-3. A kind is a workspace kind if two or more subdirectories of one
-   directory hold a manifest of that kind. The package of a file is the
+3. A kind is a workspace kind if two or more of the found directories
+   hold a manifest of that kind. The directories do not have to be below
+   the same directory. For example, a Rust workspace can have members in
+   `cli/` and in `crates/core/`. The package of a file is the
    nearest directory above it that holds a manifest of any workspace kind.
    A file with no such directory above it uses its own directory.
 4. A tree can have more than one workspace kind, for example crates below
@@ -75,6 +77,7 @@ It maps each file path (relative to `root`) to its package path. The rule:
 | Rust workspace | `Cargo.toml`, `crates/a/Cargo.toml`, `crates/b/Cargo.toml`, `crates/a/src/lib.rs`, `crates/a/tests/t.rs`, `crates/b/src/x/y.rs` | `crates/a`, `crates/a`, `crates/b` |
 | npm workspace | `package.json`, `packages/ui/package.json`, `packages/api/package.json`, `packages/ui/src/a.ts`, `scripts/b.ts` | `packages/ui`, `scripts` |
 | Two workspace kinds | `Cargo.toml`, `crates/a/Cargo.toml`, `crates/b/Cargo.toml`, `packages/ui/package.json`, `packages/api/package.json`, `crates/a/src/lib.rs`, `crates/b/src/x/y.rs`, `packages/ui/src/a.ts`, `packages/api/index.ts` | `crates/a`, `crates/b`, `packages/ui`, `packages/api` |
+| Members below different directories | `Cargo.toml`, `cli/Cargo.toml`, `crates/core/Cargo.toml`, `cli/src/main.rs`, `cli/tests/t.rs`, `crates/core/src/lib.rs` | `cli`, `cli`, `crates/core` |
 | Crates below a subdirectory | `backend/Cargo.toml`, `backend/crates/kaju-api/Cargo.toml`, `backend/crates/kaju-web/Cargo.toml`, `backend/crates/kaju-api/src/config.rs`, `backend/crates/kaju-api/src/routes/auth.rs`, `backend/crates/kaju-web/src/routes/routines.rs`, `backend/migrations/init.rs`, `frontend/web/static/js/app.js` | `backend/crates/kaju-api`, `backend/crates/kaju-api`, `backend/crates/kaju-web`, `backend`, `frontend/web/static/js` |
 | No manifests | `a/b.py`, `c.py` | `a`, `.` |
 

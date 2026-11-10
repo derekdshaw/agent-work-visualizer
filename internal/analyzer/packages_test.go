@@ -44,6 +44,12 @@ func TestPackages(t *testing.T) {
 			want:      []string{"crates/a", "crates/b", "packages/ui", "packages/api"},
 		},
 		{
+			name:      "members below different directories",
+			manifests: []string{"Cargo.toml", "cli/Cargo.toml", "crates/core/Cargo.toml"},
+			files:     []string{"cli/src/main.rs", "cli/tests/t.rs", "crates/core/src/lib.rs"},
+			want:      []string{"cli", "cli", "crates/core"},
+		},
+		{
 			name:      "crates below a subdirectory",
 			manifests: []string{"backend/Cargo.toml", "backend/crates/kaju-api/Cargo.toml", "backend/crates/kaju-web/Cargo.toml"},
 			files: []string{

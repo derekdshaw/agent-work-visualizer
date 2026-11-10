@@ -46,7 +46,10 @@ func Packages(root string, files []string) map[string]string {
 	}
 
 	// A member of a workspace can hold no source file, so count the manifests
-	// of each kind beside those that the files show, not only those.
+	// of each kind beside those that the files show, not only those. Add the
+	// counts of all parents: the members of one workspace can be below
+	// different directories, such as cli/ and crates/core/. Each parent is
+	// read one time for each kind, so no member is counted two times.
 	countOfKind := map[string]int{}
 	counted := map[string]bool{}
 	for _, directory := range sortedKeys(kindsByDirectory) {
@@ -56,9 +59,7 @@ func Packages(root string, files []string) map[string]string {
 				continue
 			}
 			counted[parent+"\x00"+kind] = true
-			if count := membersIn(filepath.Join(root, parent), kind); count > countOfKind[kind] {
-				countOfKind[kind] = count
-			}
+			countOfKind[kind] += membersIn(filepath.Join(root, parent), kind)
 		}
 	}
 
@@ -93,7 +94,7 @@ func packageOf(file string, workspaceKinds map[string]bool, kindsByDirectory map
 }
 
 // membersIn counts the subdirectories of directory that hold a manifest of
-// one kind. Two or more of them make the directory a workspace of that kind.
+// one kind.
 func membersIn(directory string, kind string) int {
 	entries, err := os.ReadDir(directory)
 	if err != nil {

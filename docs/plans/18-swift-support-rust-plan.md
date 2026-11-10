@@ -63,8 +63,8 @@ the Rust server. The two plans change different files.
   The 3D view, the 2D view, the activity mapper, and the session log then
   need no change.
 - **`Package.swift` is a manifest.** `Packages` in `backend/src/analyzer.rs`
-  and in `internal/analyzer/packages.go` get the kind `swiftpm` for
-  `Package.swift`. This is the one change to the Go code in this plan. It
+  and in `internal/analyzer/packages.go` get `Package.swift` as a manifest
+  name. This is the one change to the Go code in this plan. It
   keeps the package of a file the same in both servers.
 
 ## Pieces of code
@@ -78,8 +78,8 @@ Each row is one file that this plan adds or changes.
 | `backend/src/lang/mod.rs` | Add `pub mod swift;`. |
 | `backend/src/main.rs` | Register `swift::Language` after `typescript::Language`. |
 | `backend/examples/dump_graph.rs` | Register `swift::Language` in the same position. |
-| `backend/src/analyzer.rs` | Add `"Package.swift"` with the kind `swiftpm` to the manifest kinds of `packages`. Task 1. |
-| `internal/analyzer/packages.go` | Add `"Package.swift": "swiftpm"` to `manifestKinds`. Task 1. |
+| `backend/src/analyzer.rs` | Add `"Package.swift"` to the manifest names of `packages`. Task 1. |
+| `internal/analyzer/packages.go` | Add `"Package.swift"` to `manifestNames`. Task 1. |
 | `internal/analyzer/packages_test.go` | Add the Swift Package Manager case. Task 1. |
 | `scripts/graph-diff.sh` | Add `GRAPH_DIFF_SKIP`. Task 3. |
 | `README.md` | The language list, the layout table, a "Swift analysis recognizes" list, the limits paragraph, the Fidelity section, and a sentence in "Build and run" that says that only the Rust binary reads Swift. Task 3. |
@@ -92,15 +92,15 @@ only as text.
 
 ### Result
 
-`Package.swift` is a manifest of the kind `swiftpm` in both servers. A
-tree with two or more local packages, each with a `Package.swift`, is a
-workspace. The package of a Swift file is then its Swift package.
+`Package.swift` is a manifest in both servers. In a tree with two or more
+manifests below the root, the package of a Swift file is then its Swift
+package.
 
 ### Procedure
 
-1. Add `"Package.swift": "swiftpm"` to `manifestKinds` in
+1. Add `"Package.swift"` to `manifestNames` in
    `internal/analyzer/packages.go`.
-2. Add the same entry to the manifest kinds in `backend/src/analyzer.rs`.
+2. Add the same name to the manifest names in `backend/src/analyzer.rs`.
 
 ### Tests
 

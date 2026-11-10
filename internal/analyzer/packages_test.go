@@ -50,6 +50,24 @@ func TestPackages(t *testing.T) {
 			want:      []string{"cli", "cli", "crates/core"},
 		},
 		{
+			name:      "projects of different kinds",
+			manifests: []string{"css/Cargo.toml", "m1d/go/go.mod", "m1d/java/gradle/build.gradle"},
+			files: []string{
+				"css/src/main.rs",
+				"css/src/kitchen/mod.rs",
+				"m1d/go/main.go",
+				"m1d/go/client/client.go",
+				"m1d/java/gradle/src/main/java/Main.java",
+			},
+			want: []string{"css", "css", "m1d/go", "m1d/go", "m1d/java/gradle"},
+		},
+		{
+			name:      "one project below root",
+			manifests: []string{"app/go.mod"},
+			files:     []string{"app/main.go", "app/client/client.go"},
+			want:      []string{"app", "app/client"},
+		},
+		{
 			name:      "crates below a subdirectory",
 			manifests: []string{"backend/Cargo.toml", "backend/crates/kaju-api/Cargo.toml", "backend/crates/kaju-web/Cargo.toml"},
 			files: []string{

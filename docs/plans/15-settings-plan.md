@@ -70,8 +70,10 @@ A new package `internal/settings` has:
 - `DefaultPath()`: the path of the decision "One file on the server".
 - `Load(path)`: returns the settings in the file.
   - If the file does not exist, it returns `Defaults()` and no error.
-  - If the file is not valid JSON, it returns `Defaults()` and an error.
-    The server logs the error and continues.
+  - If the file is not valid JSON, if a value has the wrong type, or if
+    `version` is not `1`, it returns `Defaults()` and an error. The server
+    logs the error and continues with the defaults. A Save then replaces
+    the file.
   - It ignores fields that it does not know.
   - A field that is missing or not valid gets its default. The other fields
     keep their values.
@@ -91,8 +93,10 @@ schemes are in CSS. It accepts any name of the valid form. The page uses
 1. Make `internal/settings/settings_test.go`. Use `t.TempDir()` for the
    files. Use `t.Setenv` for `XDG_CONFIG_HOME`.
 2. Test `Load` with no file, with a full file, with a file that has one
-   field not valid (`"speed": 3`), with an unknown field, and with a file
-   that is not JSON.
+   field not valid (`"speed": 3`), with an unknown field, with
+   `"version": 2`, with a value of the wrong type (`"speed": "fast"`), and
+   with a file that is not JSON. Expect `Defaults()` and an error for
+   `version` 2, for the wrong type, and for the file that is not JSON.
 3. Test that `Save`, then `Load`, gives the same settings.
 4. Test that `Validate` rejects each value in the "Valid values" column
    that is not valid: `speed` 3, `colorScheme` `""`, `colorScheme`
@@ -105,9 +109,17 @@ schemes are in CSS. It accepts any name of the valid form. The page uses
 
 - `Config` in `internal/server/server.go` has a new field `SettingsPath`.
   `main.go` sets it from `settings.DefaultPath()`.
-- `Run` loads the settings once. `liveServer` keeps them, with a mutex.
+- `Run` loads the settings once. If `Load` returns an error, `Run` logs
+  it with `log.Printf` and continues with the defaults that `Load`
+  returned. `liveServer` gets three fields:
+  `settingsPath string`, `settings settings.Settings`, and
+  `settingsMu sync.Mutex`. The existing `mu` guards only `view`, so the
+  settings get their own mutex. The tests make a `liveServer` literal
+  with a `settingsPath` in `t.TempDir()`.
 - `GET /api/settings` returns the current settings as JSON.
-- `POST /api/settings` takes a full `Settings` object.
+- `POST /api/settings` takes a full `Settings` object. The decoder
+  ignores fields that it does not know, as `Load` does. It decodes into
+  a zero `Settings`, so a missing field fails `Validate`.
   - If `Validate` fails, it returns 400 with the error text. The settings
     and the file do not change.
   - If `Save` fails, it returns 500 with the error text. The settings in
@@ -124,7 +136,9 @@ schemes are in CSS. It accepts any name of the valid form. The page uses
    the file to hold them.
 3. Test POST with `speed` 3. Expect 400, and expect GET to return the old
    settings.
-4. Test POST with an `Origin` header of another site. Expect 403.
+4. Add `/api/settings` to the path list in
+   `TestServeControlsRejectOtherOrigins`. It already sends an `Origin` of
+   another site and of `null`, and expects 403.
 
 ## Task 3: Use the settings in the page
 
@@ -143,12 +157,26 @@ schemes are in CSS. It accepts any name of the valid form. The page uses
 
 In `web/src/main.ts`:
 
-- The page loads the settings before it sets the startup state.
-- `autoRotate` starts as `settings.autoRotate && !reducedMotion`.
-- `followCamera` (the Follow edit button) starts as `settings.followEdit`.
-- `speed` starts as the value of `awv.speed` if it is in `SPEEDS`, else
-  as `settings.speed`. Keep `SPEED_KEY` and the write of `awv.speed` in the
-  speed button handler, as now.
+- Code at the top level of the module sets the startup state
+  (`autoRotate`, `followCamera`, the read of `awv.speed`, and the
+  `aria-pressed` of the rotate button), and a fetch is asynchronous. So
+  the settings cannot load before that code runs. Instead, `load()`
+  calls `loadSettings()` one time, before `fetchGraph()`, and then calls
+  a new `applyStartup(settings)`. The retry of `load()` after a failed
+  graph fetch does not load the settings again. Nothing that the
+  settings control is visible before the graph arrives, so this does
+  not delay the page.
+- `applyStartup` sets `autoRotate` to
+  `settings.autoRotate && !reducedMotion`, sets `followCamera` (the
+  Follow edit button) to `settings.followEdit`, and sets `aria-pressed`
+  on both buttons from code. Remove `aria-pressed="true"` from
+  `btnFollow` in `web/index.html`; `btnRot` already gets it from code.
+- `applyStartup` sets `speed` to `settings.speed` if `awv.speed` holds no
+  value in `SPEEDS`, then calls `setSpeedUI()`. Keep the top-level read
+  of `awv.speed`, `SPEED_KEY`, and the write of `awv.speed` in the speed
+  button handler, as now.
+- `applyStartup` also sets `playback.skipWaiting` and calls
+  `applyColorScheme`, as the next bullets describe.
 - After a save that changes `speed`, remove `awv.speed` from
   `localStorage`. Read and write `localStorage` in try/catch, as now.
 - `playback.skipWaiting` (`web/src/settings/playback.ts`) is set from
@@ -179,7 +207,7 @@ In `web/src/main.ts`:
   | Control | Setting |
   | --- | --- |
   | Check box: "Skip the time the agent waits for you" | `skipWaiting` |
-  | List: color scheme, with a row of color samples for each scheme | `colorScheme` |
+  | Radio buttons: one per color scheme, each with a row of color samples | `colorScheme` |
 
   **When the page opens**
 
@@ -188,6 +216,9 @@ In `web/src/main.ts`:
   | Check box: "Auto-rotate the graph" | `autoRotate` |
   | Check box: "Follow edit" | `followEdit` |
   | List: 1×, 2×, 4×, 8×, 16× | `speed` |
+
+  An `<option>` cannot hold the color samples, so the color scheme uses
+  radio inputs, one `<label>` each. The speed list is a `<select>`.
 
   A note under the second group says: "These apply the next time the page
   opens." A note next to the speed list says: "The speed button keeps your
@@ -235,10 +266,16 @@ graph until it is drawn again.
 - `web/src/settings/palette.ts` exports `COLOR_SCHEMES`: a list of
   `{ name, label }`. The first item is `{ name: 'default', label:
   'Default' }`.
-- `colors.css` has at least one more scheme, in a
-  `:root[data-color-scheme="<name>"]` block, as the comment at the end of
-  the file shows. Each scheme must pass the checks that the comment at the
-  top of the file gives for the default scheme:
+- A scheme block uses the selector `[data-color-scheme="<name>"]`, with
+  no `:root`. `:root` matches only `<html>`, so a hidden sample element
+  with the attribute would not match a `:root[...]` rule. Change the
+  default block to `:root, [data-color-scheme="default"]`, so a sample
+  element for the default scheme reads the default colors while another
+  scheme is active. Change the comment at the end of the file to show the
+  new form.
+- `colors.css` has at least one more scheme. Each scheme must pass the
+  checks that the comment at the top of the file gives for the default
+  scheme:
   - Each color is visible on the `#04060b` background.
   - Adjacent colors are different for a viewer with a color vision
     deficiency (ΔE of 8 or more).
@@ -248,18 +285,26 @@ graph until it is drawn again.
   scheme does.
 - `GraphScene.recolor()` reads the palette again. It sets the halo and core
   colors of each node and the ring color of each module. It does not move
-  a node or the camera.
+  a node or the camera. For this, the scene must keep `graph.modules` and
+  `graph.modOf` from `setGraph`, and the ring color `BufferAttribute`
+  that `drawGroups` now makes and discards. Nothing else on the page
+  reads the palette, so the scene is the only thing to recolor.
 - After the page sets `data-color-scheme`, it calls `scene.recolor()`.
 - The color samples in the dialog come from each scheme's
   `--package-colors`. To read a scheme that is not active, read the
-  variable from a hidden element that has the `data-color-scheme`
-  attribute. Do not copy the colors into TypeScript.
+  variable with `getComputedStyle` on a hidden element that has the
+  `data-color-scheme` attribute. The sample element for the default
+  scheme has `data-color-scheme="default"`. Do not copy the colors into
+  TypeScript.
 
 ### Procedure
 
 1. Add the scheme to `colors.css` and its name to `COLOR_SCHEMES`.
-2. In `GraphScene`, keep the ring color buffer and its geometry from
-   `setGraph`. Add `recolor()`.
+2. In `GraphScene`, keep `graph.modules`, `graph.modOf`, and the ring
+   color `BufferAttribute` from `setGraph` and `drawGroups`. Add
+   `recolor()`: compute the colors with
+   `packageColors(modules, readPalette())`, set `haloBase` and `coreBase`,
+   write the ring colors into the attribute, and set `needsUpdate`.
 3. Add a test to `web/src/settings/palette.test.ts`: each name in
    `COLOR_SCHEMES` other than `default` has a block in `colors.css`. Read
    the file as text.
@@ -327,3 +372,11 @@ All steps must pass.
   the dim rings of an isolation. Calculate the ring colors from the base
   colors and the isolation in one function, and call it from both
   `recolor()` and `setIsolation()`.
+- **Plan 16 (slow speeds).** Plan 16 adds speeds below 1× and arrow keys
+  on the speed button. Both plans change `SPEEDS` and the speed button
+  handler. The plan that is merged second must also update the valid
+  values of the `speed` setting in `Validate`, `parseSettings`, and the
+  speed list of the dialog.
+- **Plan 15.1 (Rust port).** The new package `internal/settings` and the
+  two `/api/settings` routes are more surface for the Rust port to
+  mirror.

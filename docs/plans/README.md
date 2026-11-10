@@ -40,8 +40,8 @@ design changes.
   file card highlights the file and opens its tab. A click on a package card
   highlights the package. The same click again, Esc, or FOLLOW AGENT
   returns the highlight to the agent.
-- **Packages.** A package is a workspace member (for example a Rust crate)
-  when the tree has two or more manifests of one kind below the root.
+- **Packages.** A package is a project directory (for example a Rust crate)
+  when the tree has two or more manifests of any kind below the root.
   Otherwise a package is a directory. Plan 08 has the rule and its tests.
 - **No network.** The page must work with no network access. Do not load
   web fonts or other remote files.

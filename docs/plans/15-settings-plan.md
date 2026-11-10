@@ -117,9 +117,11 @@ schemes are in CSS. It accepts any name of the valid form. The page uses
   settings get their own mutex. The tests make a `liveServer` literal
   with a `settingsPath` in `t.TempDir()`.
 - `GET /api/settings` returns the current settings as JSON.
-- `POST /api/settings` takes a full `Settings` object. The decoder
-  ignores fields that it does not know, as `Load` does. It decodes into
-  a zero `Settings`, so a missing field fails `Validate`.
+- `POST /api/settings` takes a full `Settings` object. The decoder uses
+  `DisallowUnknownFields`, so a field that the server does not know is an
+  error. It decodes into a zero `Settings`, so a missing field fails
+  `Validate`. A decode error returns 400 with the decoder's text, which
+  names the field. The settings and the file do not change.
   - If `Validate` fails, it returns 400 with the error text. The settings
     and the file do not change.
   - If `Save` fails, it returns 500 with the error text. The settings in
@@ -134,8 +136,8 @@ schemes are in CSS. It accepts any name of the valid form. The page uses
    defaults.
 2. Test POST with valid settings, then GET. Expect the new settings. Expect
    the file to hold them.
-3. Test POST with `speed` 3. Expect 400, and expect GET to return the old
-   settings.
+3. Test POST with `speed` 3, and with an unknown field. Expect 400 with
+   text that names the field, and expect GET to return the old settings.
 4. Add `/api/settings` to the path list in
    `TestServeControlsRejectOtherOrigins`. It already sends an `Origin` of
    another site and of `null`, and expects 403.

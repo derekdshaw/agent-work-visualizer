@@ -23,6 +23,7 @@ import (
 
 	"github.com/derekdshaw/agent-work-visualizer/internal/analyzer"
 	"github.com/derekdshaw/agent-work-visualizer/internal/session"
+	"github.com/derekdshaw/agent-work-visualizer/internal/settings"
 	"github.com/derekdshaw/agent-work-visualizer/internal/transcript"
 )
 
@@ -32,12 +33,14 @@ const sessionListLimit = 50
 // fileSizeLimit is the largest file that the code pane opens.
 const fileSizeLimit = 2 << 20
 
-// Config configures Run. Sessions is the directory of the session logs.
+// Config configures Run. Sessions is the directory of the session logs, and
+// SettingsPath the settings file.
 type Config struct {
-	Analyzer *analyzer.Analyzer
-	Root     string
-	Port     int
-	Sessions string
+	Analyzer     *analyzer.Analyzer
+	Root         string
+	Port         int
+	Sessions     string
+	SettingsPath string
 }
 
 // Run analyzes the root with the analyzer, follows Claude Code session
@@ -57,7 +60,11 @@ func Run(config Config) error {
 	// folder, and then Run waits for them.
 	defer workers.Wait()
 	defer cancel()
-	live := &liveServer{projects: projects, sessions: config.Sessions, web: webHandler(builtWeb())}
+	current, err := settings.Load(config.SettingsPath)
+	if err != nil {
+		log.Printf("Using the default settings: %v", err)
+	}
+	live := &liveServer{projects: projects, sessions: config.Sessions, web: webHandler(builtWeb()), settingsPath: config.SettingsPath, settings: current}
 	live.open = func(root string) (*rootView, error) {
 		return openRoot(ctx, &workers, config.Analyzer, projects, config.Sessions, root)
 	}
@@ -108,7 +115,8 @@ func Run(config Config) error {
 // gateLimit is the gate hold limit, and zero means gateHoldLimit. open
 // analyzes a folder and returns its view with running workers. projects is the
 // directory of the Claude Code session transcripts, and sessions the directory
-// of the session logs. web serves the page.
+// of the session logs. web serves the page. settings holds the settings of
+// the viewer, and settingsPath the file that keeps them.
 type liveServer struct {
 	gate      pauseGate
 	gateLimit time.Duration
@@ -120,6 +128,10 @@ type liveServer struct {
 	opening atomic.Bool
 	mu      sync.RWMutex
 	view    *rootView
+	// settingsMu guards settings and the settings file.
+	settingsMu   sync.Mutex
+	settings     settings.Settings
+	settingsPath string
 }
 
 // resolveRoot returns the absolute path of the folder path. A leading "~"
@@ -205,6 +217,8 @@ func (s *liveServer) routes() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{name}", s.serveSession)
 	mux.HandleFunc("GET /api/file", s.serveFile)
 	mux.HandleFunc("POST /api/root", s.serveOpen)
+	mux.HandleFunc("GET /api/settings", s.serveSettings)
+	mux.HandleFunc("POST /api/settings", s.saveSettings)
 	mux.HandleFunc("POST /api/pause", func(w http.ResponseWriter, r *http.Request) {
 		s.setPaused(true)
 		w.WriteHeader(http.StatusNoContent)

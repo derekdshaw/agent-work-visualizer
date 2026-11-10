@@ -2,6 +2,7 @@ package server
 
 import (
 	"github.com/derekdshaw/agent-work-visualizer/internal/activity"
+	"github.com/derekdshaw/agent-work-visualizer/internal/analyzer"
 	"github.com/derekdshaw/agent-work-visualizer/internal/callgraph"
 )
 
@@ -18,11 +19,14 @@ type graphPayload struct {
 }
 
 // graphNode is a callable. Module is its directory, "." for the root.
+// Package is the workspace member that holds it, or its directory when the
+// tree is not a workspace. See analyzer.Packages.
 type graphNode struct {
 	ID            string `json:"id"`
 	Label         string `json:"label"`
 	QualifiedName string `json:"qualifiedName"`
 	Module        string `json:"module"`
+	Package       string `json:"package"`
 	Kind          string `json:"kind"`
 	Language      string `json:"language"`
 	File          string `json:"file"`
@@ -39,8 +43,19 @@ type graphEdge struct {
 
 // slimGraph returns the nodes and edges of graph keyed by activity key.
 // Callables that share a key, such as Java overloads, become one node, and
-// edges between them disappear.
-func slimGraph(graph *callgraph.Graph) ([]graphNode, []graphEdge) {
+// edges between them disappear. root is the folder of the graph; the package
+// of each node comes from the manifests in it.
+func slimGraph(root string, graph *callgraph.Graph) ([]graphNode, []graphEdge) {
+	files := make([]string, 0, len(graph.Nodes))
+	inFiles := make(map[string]bool, len(graph.Nodes))
+	for _, function := range graph.Nodes {
+		if !inFiles[function.File] {
+			inFiles[function.File] = true
+			files = append(files, function.File)
+		}
+	}
+	packages := analyzer.Packages(root, files)
+
 	nodes := []graphNode{}
 	keys := make(map[string]string, len(graph.Nodes))
 	seen := make(map[string]bool, len(graph.Nodes))
@@ -56,8 +71,8 @@ func slimGraph(graph *callgraph.Graph) ([]graphNode, []graphEdge) {
 			module = "."
 		}
 		nodes = append(nodes, graphNode{
-			ID: key, Label: function.Name, QualifiedName: function.QualifiedName, Module: module, Kind: function.Kind,
-			Language: function.Language, File: function.File, Line: function.Line, EndLine: function.EndLine,
+			ID: key, Label: function.Name, QualifiedName: function.QualifiedName, Module: module, Package: packages[function.File],
+			Kind: function.Kind, Language: function.Language, File: function.File, Line: function.Line, EndLine: function.EndLine,
 		})
 	}
 	edges := []graphEdge{}

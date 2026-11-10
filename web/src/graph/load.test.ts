@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { buildGraph, FAR, type GraphPayload, HI_CALLS_LO, hopsFrom, LO_CALLS_HI, parseGraph } from './load.ts';
 
 function node(id: string, module = '.') {
-  return { id, label: id, qualifiedName: id, module, kind: 'function', language: 'go', file: 'a.go', line: 1, endLine: 2 };
+  return { id, label: id, qualifiedName: id, module, package: module, kind: 'function', language: 'go', file: 'a.go', line: 1, endLine: 2 };
 }
 
 const payload: GraphPayload = {
@@ -56,4 +56,12 @@ test('parseGraph narrows the payload', () => {
   assert.equal(parsed.value.edges.length, 6);
   assert.equal(parseGraph({ nodes: [] }).ok, false);
   assert.equal(parseGraph(null).ok, false);
+});
+
+test('parseGraph uses module as the package of a node without one', () => {
+  const { package: _, ...old } = node('a', 'pkg');
+  const parsed = parseGraph({ ...payload, nodes: [old, { ...node('b', 'pkg'), package: 'crates/x' }] });
+  assert.ok(parsed.ok);
+  assert.equal(parsed.value.nodes[0].package, 'pkg');
+  assert.equal(parsed.value.nodes[1].package, 'crates/x');
 });

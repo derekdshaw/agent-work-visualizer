@@ -90,7 +90,9 @@ web/src/ui                 stream, blast radius, code pane, scrubber, panes, wor
 - **Graph.** Each node is a callable, grouped into clusters by directory,
   and within a directory into sub-clusters by file. A ring under each
   directory's cluster carries its name; file names appear for the directory
-  under the pointer and the one the agent edits.
+  under the pointer and the one the agent edits. Each node of `GET /api/graph`
+  also carries a `package`: the workspace member that holds it, such as a
+  crate, or its directory when the tree has no workspace.
   Drag to orbit, Shift-drag or drag two fingers to pan, scroll
   or pinch to zoom, click a node for its details. Reset view also clears the pan.
   Auto-rotate pauses while you interact, and follow mode eases the camera

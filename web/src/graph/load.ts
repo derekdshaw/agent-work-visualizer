@@ -7,6 +7,10 @@ export interface GraphNode {
   qualifiedName: string;
   // The node's directory, "." for the root.
   module: string;
+  // The workspace member that holds the node, such as a crate, or its
+  // directory when the tree is not a workspace. Equal to module when the
+  // server or log is older than this field.
+  package: string;
   kind: string;
   language: string;
   file: string;
@@ -72,6 +76,7 @@ function parseNode(value: unknown): GraphNode | null {
     label: text(value, 'label'),
     qualifiedName: text(value, 'qualifiedName'),
     module: text(value, 'module') || '.',
+    package: text(value, 'package') || text(value, 'module') || '.',
     kind: text(value, 'kind'),
     language: text(value, 'language'),
     file: text(value, 'file'),

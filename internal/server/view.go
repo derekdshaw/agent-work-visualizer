@@ -137,7 +137,7 @@ func (v *rootView) stop() {
 // setGraph encodes the graph payload for graph under the next version number
 // and returns that number.
 func (v *rootView) setGraph(graph *callgraph.Graph) (int, error) {
-	nodes, edges := slimGraph(graph)
+	nodes, edges := slimGraph(v.root, graph)
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	version := v.version + 1

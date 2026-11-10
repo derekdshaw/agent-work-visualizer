@@ -142,18 +142,44 @@ func TestSlimGraphKeysNodesAndMergesCollisions(t *testing.T) {
 			{Source: "missing", Target: "pkg/B.java:2:p.B.go", Kind: "call"},
 		},
 	}
-	nodes, edges := slimGraph(graph)
+	nodes, edges := slimGraph(t.TempDir(), graph)
 	run, goKey := activity.Key("A.java", "p.A.run"), activity.Key("pkg/B.java", "p.B.go")
 	wantNodes := []graphNode{
-		{ID: run, Label: "run", QualifiedName: "p.A.run", Module: ".", Kind: "method", Language: "java", File: "A.java", Line: 3, EndLine: 4},
-		{ID: goKey, Label: "go", QualifiedName: "p.B.go", Module: "pkg", Kind: "method", Language: "java", File: "pkg/B.java", Line: 2, EndLine: 9},
+		{ID: run, Label: "run", QualifiedName: "p.A.run", Module: ".", Package: ".", Kind: "method", Language: "java", File: "A.java", Line: 3, EndLine: 4},
+		{ID: goKey, Label: "go", QualifiedName: "p.B.go", Module: "pkg", Package: "pkg", Kind: "method", Language: "java", File: "pkg/B.java", Line: 2, EndLine: 9},
 	}
 	wantEdges := []graphEdge{{A: run, B: goKey, Kind: "call"}, {A: run, B: goKey, Kind: "dispatch"}}
 	if !reflect.DeepEqual(nodes, wantNodes) || !reflect.DeepEqual(edges, wantEdges) {
 		t.Fatalf("slimGraph =\n%+v\n%+v\nwant\n%+v\n%+v", nodes, edges, wantNodes, wantEdges)
 	}
-	if nodes, edges := slimGraph(&callgraph.Graph{}); nodes == nil || edges == nil {
+	if nodes, edges := slimGraph(t.TempDir(), &callgraph.Graph{}); nodes == nil || edges == nil {
 		t.Fatal("an empty graph has nil lists, which encode as null")
+	}
+}
+
+func TestSlimGraphSetsThePackageOfEachNode(t *testing.T) {
+	root := t.TempDir()
+	for _, path := range []string{"Cargo.toml", "crates/a/Cargo.toml", "crates/b/Cargo.toml", "crates/a/src/lib.rs", "crates/a/tests/t.rs", "crates/b/src/x/y.rs"} {
+		path = filepath.Join(root, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	graph := &callgraph.Graph{Nodes: []callgraph.Function{
+		{ID: "1", Name: "a", QualifiedName: "a", File: filepath.FromSlash("crates/a/src/lib.rs"), Directory: filepath.FromSlash("crates/a/src"), Language: "rust"},
+		{ID: "2", Name: "t", QualifiedName: "t", File: filepath.FromSlash("crates/a/tests/t.rs"), Directory: filepath.FromSlash("crates/a/tests"), Language: "rust"},
+		{ID: "3", Name: "y", QualifiedName: "y", File: filepath.FromSlash("crates/b/src/x/y.rs"), Directory: filepath.FromSlash("crates/b/src/x"), Language: "rust"},
+	}}
+	nodes, _ := slimGraph(root, graph)
+	got := make([]string, len(nodes))
+	for index, node := range nodes {
+		got[index] = filepath.ToSlash(node.Package)
+	}
+	if want := []string{"crates/a", "crates/a", "crates/b"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("packages = %v, want %v", got, want)
 	}
 }
 
@@ -161,11 +187,11 @@ func TestGraphPayloadJSONFieldNames(t *testing.T) {
 	// web/src/graph/load.ts reads these field names.
 	payload := graphPayload{
 		View: "v", Root: "/r", Branch: "main", Version: 2,
-		Nodes: []graphNode{{ID: "k", Label: "f", QualifiedName: "a.f", Module: ".", Kind: "function", Language: "python", File: "a.py", Line: 1, EndLine: 2}},
+		Nodes: []graphNode{{ID: "k", Label: "f", QualifiedName: "a.f", Module: ".", Package: ".", Kind: "function", Language: "python", File: "a.py", Line: 1, EndLine: 2}},
 		Edges: []graphEdge{{A: "k", B: "j", Kind: "call"}},
 	}
 	want := `{"view":"v","root":"/r","branch":"main","version":2,` +
-		`"nodes":[{"id":"k","label":"f","qualifiedName":"a.f","module":".","kind":"function","language":"python","file":"a.py","line":1,"endLine":2}],` +
+		`"nodes":[{"id":"k","label":"f","qualifiedName":"a.f","module":".","package":".","kind":"function","language":"python","file":"a.py","line":1,"endLine":2}],` +
 		`"edges":[{"a":"k","b":"j","kind":"call"}]}`
 	choice := rootChoice{Path: "/a", Session: testTime, Worktree: true}
 	if data, err := json.Marshal(payload); err != nil || string(data) != want {

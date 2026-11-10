@@ -37,13 +37,18 @@ It maps each file path (relative to `root`) to its package path. The rule:
    same file name. `build.gradle` and `build.gradle.kts` are one kind.
 2. Find the manifests in the directories that contain the files and in
    their parent directories, up to `root`. Do not count a manifest in
-   `root` itself.
-3. If two or more of the found manifests have the same kind, the tree is a
-   workspace of that kind. The package of a file is the nearest directory
-   above it that has a manifest of that kind. A file with no such directory
-   uses its own directory.
-4. If no kind has two or more manifests, the package of a file is its
-   directory, or `.` for a file in `root`.
+   `root` itself. For each directory that holds a manifest, also look in
+   the other subdirectories of its parent directory. A member of a
+   workspace can hold no source file, so the files alone do not show it.
+3. A kind is a workspace kind if two or more subdirectories of one
+   directory hold a manifest of that kind. The package of a file is the
+   nearest directory above it that holds a manifest of any workspace kind.
+   A file with no such directory above it uses its own directory.
+4. A tree can have more than one workspace kind, for example crates below
+   `crates/` and npm packages below `packages/`. Each file gets the package
+   that is nearest to it. No kind wins over another kind.
+5. If there is no workspace kind, the package of a file is its directory,
+   or `.` for a file in `root`.
 
 ### Procedure
 
@@ -53,6 +58,9 @@ It maps each file path (relative to `root`) to its package path. The rule:
    you checked.
 3. Use `os.Stat` on each manifest name. Do not walk the full tree, so a
    large `node_modules` or `target` directory costs nothing.
+4. For the other subdirectories of a parent, use one `os.ReadDir` of that
+   parent and `os.Stat` in each subdirectory. Read each parent one time
+   only for each kind.
 
 ### Tests
 
@@ -66,6 +74,8 @@ It maps each file path (relative to `root`) to its package path. The rule:
 | One crate | `Cargo.toml`, `src/main.rs`, `src/parser/pack.rs`, `tests/parse.rs` | `src`, `src/parser`, `tests` |
 | Rust workspace | `Cargo.toml`, `crates/a/Cargo.toml`, `crates/b/Cargo.toml`, `crates/a/src/lib.rs`, `crates/a/tests/t.rs`, `crates/b/src/x/y.rs` | `crates/a`, `crates/a`, `crates/b` |
 | npm workspace | `package.json`, `packages/ui/package.json`, `packages/api/package.json`, `packages/ui/src/a.ts`, `scripts/b.ts` | `packages/ui`, `scripts` |
+| Two workspace kinds | `Cargo.toml`, `crates/a/Cargo.toml`, `crates/b/Cargo.toml`, `packages/ui/package.json`, `packages/api/package.json`, `crates/a/src/lib.rs`, `crates/b/src/x/y.rs`, `packages/ui/src/a.ts`, `packages/api/index.ts` | `crates/a`, `crates/b`, `packages/ui`, `packages/api` |
+| Crates below a subdirectory | `backend/Cargo.toml`, `backend/crates/kaju-api/Cargo.toml`, `backend/crates/kaju-web/Cargo.toml`, `backend/crates/kaju-api/src/config.rs`, `backend/crates/kaju-api/src/routes/auth.rs`, `backend/crates/kaju-web/src/routes/routines.rs`, `backend/migrations/init.rs`, `frontend/web/static/js/app.js` | `backend/crates/kaju-api`, `backend/crates/kaju-api`, `backend/crates/kaju-web`, `backend`, `frontend/web/static/js` |
 | No manifests | `a/b.py`, `c.py` | `a`, `.` |
 
 3. Run `go test ./internal/analyzer/`.

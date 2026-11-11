@@ -35,6 +35,7 @@
     <span class="sim" id="meta">NO GRAPH</span>
     <span class="chip" id="mismatch" role="status" hidden></span>
     <button class="btn txt" id="btnGate" type="button" aria-pressed="false" title="Hold the agent’s next tool call. Needs the PreToolUse hook from the README.">PAUSE AGENT</button>
+    <button class="btn txt" id="btnSet" type="button" title="Settings: playback, colors, and the startup state">SETTINGS</button>
     <span class="rec" id="recWrap"><span></span><b id="rec">REC 00:00</b></span>
   </div>
 </header>
@@ -125,6 +126,35 @@
 </footer>
 </div>
 </div>
+<dialog class="settings" id="dlgSettings" aria-labelledby="setTitle">
+  <form id="setForm" novalidate>
+    <h2 id="setTitle">SETTINGS</h2>
+    <section>
+      <h3>Playback</h3>
+      <label class="setrow" title="During playback, the playhead jumps over the spans where the agent waited for your next prompt."><input type="checkbox" id="setSkip"><span>Skip the time the agent waits for you</span></label>
+    </section>
+    <section>
+      <h3>Theme</h3>
+      <p class="setnote setdesc">The colors of the packages in the graph. Each package gets one color from the theme, in name order, and the colors repeat lighter and darker when there are more packages than colors.</p>
+      <fieldset class="setgroup" id="setSchemes" aria-label="Theme"></fieldset>
+    </section>
+    <section>
+      <h3>When the page opens</h3>
+      <label class="setrow" title="When the page opens, the graph slowly orbits while you do not interact with it. The Auto-rotate button changes this for the open page."><input type="checkbox" id="setRotate"><span>Auto-rotate the graph</span></label>
+      <p class="setnote" id="setMotion" hidden>Your system asks for reduced motion, so auto-rotate stays off.</p>
+      <label class="setrow" title="When the page opens, the camera and the code pane move to each new edit. The Follow edit button changes this for the open page."><input type="checkbox" id="setFollow"><span>Follow edit</span></label>
+      <label class="setrow" title="The playback speed when the page opens. The speed button changes it for the open page."><span>Playback speed</span><select id="setSpeed"></select></label>
+      <p class="setnote">The speed button keeps your last speed. Saving a new speed here clears it.</p>
+      <p class="setnote">These apply the next time the page opens.</p>
+    </section>
+    <p class="setstatus" id="setStatus" role="status"></p>
+    <div class="setbtns">
+      <button class="btn txt" id="setReset" type="button" title="Show the default settings. Save keeps them.">RESET</button>
+      <button class="btn txt" id="setCancel" type="button">CANCEL</button>
+      <button class="btn txt" id="setSave" type="submit">SAVE</button>
+    </div>
+  </form>
+</dialog>
 <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

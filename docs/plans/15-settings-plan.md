@@ -4,7 +4,7 @@ This plan adds a settings dialog to the page. The server keeps the settings
 in a file, so each browser gets the same settings. The settings are:
 
 - Skip the waits during playback.
-- The color scheme of the graph.
+- The color scheme of the graph, and custom color schemes (Task 6).
 - The startup state: auto-rotate, Follow edit, and the playback speed.
 
 The text uses Simplified Technical English (ASD-STE100). Code names, file
@@ -251,11 +251,20 @@ In `web/src/main.ts`:
   change.
 - The dialog has two groups:
 
-  **Playback and graph** (applies when you save)
+  **Playback** (applies when you save)
 
   | Control | Setting |
   | --- | --- |
   | Check box: "Skip the time the agent waits for you" | `skipWaiting` |
+
+  **Theme** (applies when you save)
+
+  A short description says that each package gets one color from the
+  theme, in name order, and that the colors repeat lighter and darker when
+  there are more packages than colors.
+
+  | Control | Setting |
+  | --- | --- |
   | Radio buttons: one per color scheme, each with a row of color samples | `colorScheme` |
 
   **When the page opens**
@@ -334,6 +343,148 @@ graph until it is drawn again.
    write the ring colors into the attribute, and set `needsUpdate`.
 3. The `Schemes` test of Task 1 covers the new scheme.
 
+## Task 6: Custom themes
+
+### Problem
+
+The viewer can select a theme, but cannot make one. The themes are in Go,
+and a new theme is a code change.
+
+### Decisions
+
+- **A theme is an ordered list of colors.** `packageColors` in
+  `web/src/settings/palette.ts` gives the colors to the packages in sorted
+  name order, and repeats them lighter and darker when the list runs out.
+  So the order of the colors is what decides which package gets which
+  color, and one color is a valid theme: each package then gets a
+  variation of it.
+- **A theme does not name packages.** The settings are the same for each
+  working tree, and package names belong to one tree. A map from a
+  package to a color is a per-tree setting, and is not part of this plan.
+- **Default is read-only.** The themes in `settings.Schemes` stay in Go.
+  Custom themes are in the settings file.
+- **No ΔE checks on custom themes.** The viewer selects the colors.
+- **One Save.** The editor changes the settings in the page. Save in the
+  settings dialog sends them to the server in one POST. Cancel discards
+  the changes of the editor too.
+- **The picker is the browser's.** Each color is an `<input type="color">`.
+  The browser's picker has a spectrum or a wheel and a hex field, and the
+  page needs no new dependency and no network.
+
+### Result
+
+**Server** (`internal/settings`)
+
+- `Settings` gets a field `themes`: a list of `Scheme`. The default is an
+  empty list. `Validate` checks each theme: the `name` has the valid form,
+  is not the name of a scheme in `Schemes`, and is unique in the list;
+  the `label` is 1 to 40 characters; `colors` has 1 to 12 items, each a
+  `#rrggbb` string in lower case. `colorScheme` is valid if it names a
+  scheme in `Schemes` or a theme in `themes`.
+- `Load` removes a theme that is not valid, and puts it in `Replaced`.
+  If `colorScheme` names a removed theme, it gets its default.
+- `Save` writes the themes in the file, as part of `Settings`.
+- `GET /api/settings` and `POST /api/settings` need no change, because
+  the themes are part of `Settings`.
+
+**Page**
+
+- `Settings` in `web/src/settings/settings.ts` gets `themes: Scheme[]`.
+  `parseSettings` reads it with `parseScheme`, and drops a theme that is
+  not valid. `applyColorScheme` finds the scheme in `options.colorSchemes`
+  and then in `settings.themes`.
+- The Theme section of the dialog lists the schemes of the server, then
+  the custom themes. Each row has a radio button, the label, and the
+  swatch row. Each swatch has hover text that names the packages of the
+  open graph that get that color, for example "pkg/analyzer, pkg/session".
+  The dialog gets the package list from `graph.modules` when it opens.
+- Buttons in the Theme section:
+  - **+** makes a new theme. Its colors are a copy of the selected theme.
+    Its label is "Theme N", where N is the smallest number that is not in
+    use. Its name is the label in lower case with `-` for spaces, made
+    unique with a number if necessary. The new theme is selected, and
+    the editor opens.
+  - **Edit**, a pencil icon with the hover text "Edit this theme", opens
+    the editor for the selected theme. It is disabled when a scheme of
+    the server is selected.
+  - **Delete**, a trash can icon with the hover text "Delete this theme",
+    removes the selected theme and selects the default scheme. It is
+    disabled when a scheme of the server is selected.
+  - The icon buttons have an `aria-label` with the same text as the hover
+    text, and the look of the other icon buttons of the page.
+- **The editor** is a second view in the same `<dialog>`. It has:
+  - A text field for the label, with the name under it.
+  - One row per color: a drag handle, an `<input type="color">`, the hex
+    value as text, and a trash can button with the hover text "Remove
+    this color". The remove button is disabled when there is one color.
+  - **Reorder by drag.** The viewer drags a row by its handle to a new
+    position. Use the pointer events, not the HTML drag and drop API,
+    because the HTML API does not work with touch on most browsers. While
+    a row moves, a line shows where it will drop. The handle can take the
+    focus, and the Up and Down arrow keys move the row, so a keyboard
+    user can reorder too.
+  - An **Add color** button, disabled at 12 colors. The new color is a
+    copy of the last color.
+  - A preview: a list of the packages of the open graph, each with the
+    color that it gets from this theme, with the lightness variation. A
+    note says that the order of the colors decides which package gets
+    which color. The list has a scroll bar when it is long.
+  - **Done** returns to the settings view with the changes. **Cancel**
+    returns with the theme as it was before the editor opened.
+- **Live preview.** While the editor is open, each change to a color
+  calls `applyColorScheme` with the colors of the editor, and then
+  `scene.recolor()`. Done keeps the preview. Cancel in the editor, and
+  Cancel in the settings dialog, put the saved scheme back.
+- The dialog still fits in a window that is 400 px wide. The editor
+  rows wrap or shrink; they do not need a horizontal scroll bar.
+
+### Procedure
+
+1. Add `Themes` to `Settings` and the checks to `Validate` and `Load`.
+   Add the tests: a valid theme, a theme that uses the name `default`,
+   a theme with a color that is not `#rrggbb`, a theme with 13 colors,
+   a `colorScheme` that names a theme, and `Load` with a theme that is
+   not valid.
+2. Add `themes` to `settings.ts` and `parseSettings`, with tests.
+3. Make the editor view in `web/index.html` and
+   `web/src/ui/settingsDialog.ts`. `open` takes the package list.
+   `applyColorScheme` in `main.ts` takes the colors to apply, so the
+   editor can preview a theme that is not saved.
+4. Add the CSS.
+
+### Tests
+
+1. Run `go test ./...`, `npm --prefix web test`, and
+   `npm --prefix web run typecheck`.
+2. Run `npm --prefix web run build`.
+
+### Validation
+
+1. Open the dialog. Click **+**. The editor opens with the colors of the
+   default scheme and the label "Theme 1".
+2. Change the first color. The graph recolors at once. The preview shows
+   the new color on the first package by name.
+3. Drag the first color below the second. The preview shows the packages
+   with the colors in the new order. The graph follows. Focus the handle
+   of a row and press Up. The row moves up.
+4. Remove colors until one remains. The remove button is disabled. Each
+   package in the preview has a variation of that color.
+5. Click Done, then Save. Reload. The theme is selected and the graph
+   has its colors. The settings file holds the theme.
+6. Open the dialog, select Default, click Edit. The button is disabled.
+   Select the custom theme, click Delete. Default is selected. Click
+   Cancel. Open the dialog. The custom theme is still there, because
+   Cancel discards the deletion.
+7. Edit the settings file by hand: give the theme the color `"red"`.
+   Reload. The server logs that it replaced the theme, and the dialog
+   does not show it.
+8. Edit the settings file by hand: give the theme the name `default`.
+   Reload. The server logs that it replaced the theme.
+9. Open the editor and change a color. Click Cancel in the editor. The
+   graph shows the saved colors again.
+10. Make the window 400 px wide. Open the editor with 12 colors and 20
+    packages. The dialog shows with no horizontal scroll bar.
+
 ## Validation
 
 All steps must pass.
@@ -403,5 +554,9 @@ All steps must pass.
   16 adds its speeds there, and must change the top-level `SPEEDS` in
   `main.ts` only if this plan is not merged first.
 - **Plan 15.1 (Rust port).** The new package `internal/settings`, with
-  the defaults, the speeds, and the color schemes, and the two
-  `/api/settings` routes are more surface for the Rust port to mirror.
+  the defaults, the speeds, the color schemes, and the checks of the
+  custom themes, and the two `/api/settings` routes are more surface for
+  the Rust port to mirror.
+- **Per-package colors.** A map from a package to a color is a per-tree
+  setting. It is not part of this plan. A later plan can add it, with the
+  map in the page's `localStorage` or in a file next to the session logs.

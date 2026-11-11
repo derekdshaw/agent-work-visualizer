@@ -5,9 +5,10 @@ import { connect, getJSON, getText, postJSON } from './net/live.ts';
 import { type Ev, type Header, isRecord, parseLine, parseLog, type Result } from './session/events.ts';
 import { fold, heatTarget, LOCK_T, nextEditTime, type Phase, previousEditTime, thinkingSpans, type ViewState, waitingSpans } from './session/reduce.ts';
 import { playback } from './settings/playback.ts';
-import { loadSettings, type Options, type Scheme, type Settings } from './settings/settings.ts';
+import { loadSettings, type Options, saveSettings, type Scheme, type Settings } from './settings/settings.ts';
 import { GroupLabels } from './ui/labels.ts';
 import { type BlastItem, fmt, Panes } from './ui/panes.ts';
+import { SettingsDialog } from './ui/settingsDialog.ts';
 import { bindPanes } from './ui/split.ts';
 import { bindTree } from './ui/tree.ts';
 import { GraphScene } from './view/scene.ts';
@@ -50,6 +51,7 @@ const ui = {
   meta: byId('meta', HTMLElement),
   mismatch: byId('mismatch', HTMLElement),
   gate: byId('btnGate', HTMLButtonElement),
+  settings: byId('btnSet', HTMLButtonElement),
   rec: byId('rec', HTMLElement),
   recWrap: byId('recWrap', HTMLElement),
   sessionPick: byId('sessPick', HTMLSelectElement),
@@ -281,6 +283,8 @@ async function load(): Promise<void> {
 // rules of the server. The buttons on the page change the state after this,
 // but not the settings.
 function applyStartup(settings: Settings, options: Options): void {
+  currentSettings = settings;
+  currentOptions = options;
   speeds = options.speeds;
   schemes = options.colorSchemes;
   autoRotate = settings.autoRotate && !reducedMotion;
@@ -474,6 +478,55 @@ const SPEED_KEY = 'awv.speed';
 let speeds: readonly number[] = [];
 let schemes: readonly Scheme[] = [];
 let speed = 1;
+
+// The saved settings and the rules of the server, for the settings dialog.
+// They are null until the first load applies the settings.
+let currentSettings: Settings | null = null;
+let currentOptions: Options | null = null;
+
+const settingsDialog = new SettingsDialog(
+  {
+    dialog: byId('dlgSettings', HTMLDialogElement),
+    form: byId('setForm', HTMLFormElement),
+    opener: ui.settings,
+    skipWaiting: byId('setSkip', HTMLInputElement),
+    schemes: byId('setSchemes', HTMLElement),
+    autoRotate: byId('setRotate', HTMLInputElement),
+    motionNote: byId('setMotion', HTMLElement),
+    followEdit: byId('setFollow', HTMLInputElement),
+    speed: byId('setSpeed', HTMLSelectElement),
+    status: byId('setStatus', HTMLElement),
+    reset: byId('setReset', HTMLButtonElement),
+    cancel: byId('setCancel', HTMLButtonElement),
+    save: byId('setSave', HTMLButtonElement),
+  },
+  reducedMotion,
+  async (next) => {
+    if (!currentSettings || !currentOptions) return { ok: false, error: 'The settings are not loaded yet.' };
+    const result = await saveSettings(next, currentOptions);
+    if (result.ok) {
+      const previous = currentSettings;
+      currentSettings = result.value;
+      // Skip waits and the color scheme apply to the open page at once. The
+      // startup settings apply at the next startup.
+      playback.skipWaiting = result.value.skipWaiting;
+      applyColorScheme(result.value.colorScheme);
+      // A new speed setting clears the last clicked speed, so it applies at
+      // the next startup.
+      if (result.value.speed !== previous.speed) {
+        try {
+          localStorage.removeItem(SPEED_KEY);
+        } catch {
+          // Without storage, there is no last speed to clear.
+        }
+      }
+    }
+    return result;
+  },
+);
+ui.settings.addEventListener('click', () => {
+  if (currentSettings && currentOptions) settingsDialog.open(currentSettings, currentOptions);
+});
 function setSpeedUI(): void {
   ui.speed.textContent = `${speed}×`;
   ui.speed.setAttribute('aria-label', `Playback speed ${speed}×`);

@@ -14,6 +14,17 @@ export interface Settings {
   autoRotate: boolean;
   followEdit: boolean;
   speed: number;
+  // The custom themes of the viewer. The schemes of the server are
+  // read-only; colorScheme can name either.
+  themes: Scheme[];
+  // The theme of each working tree, by its absolute root path. A tree
+  // without an entry uses colorScheme.
+  projectThemes: Record<string, string>;
+}
+
+// themeFor returns the theme name for the working tree at root.
+export function themeFor(settings: Settings, root: string): string {
+  return (root && settings.projectThemes[root]) || settings.colorScheme;
 }
 
 // Scheme is a color scheme of the graph. colors are #rrggbb strings.
@@ -42,6 +53,9 @@ function strings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 }
 
+export const HEX_COLOR = /^#[0-9a-f]{6}$/;
+export const MAX_THEME_COLORS = 12;
+
 function parseScheme(value: unknown): Scheme | null {
   if (!isRecord(value)) return null;
   const name = value['name'];
@@ -51,19 +65,44 @@ function parseScheme(value: unknown): Scheme | null {
   return { name, label, colors };
 }
 
+// parseThemes reads the custom themes and drops a theme that is not valid,
+// that uses the name of a scheme, or that repeats a name.
+function parseThemes(value: unknown, schemes: readonly Scheme[]): Scheme[] {
+  if (!Array.isArray(value)) return [];
+  const themes: Scheme[] = [];
+  for (const item of value) {
+    const theme = parseScheme(item);
+    if (!theme || theme.colors.length > MAX_THEME_COLORS || !theme.colors.every((color) => HEX_COLOR.test(color))) continue;
+    if (schemes.some((s) => s.name === theme.name) || themes.some((s) => s.name === theme.name)) continue;
+    themes.push(theme);
+  }
+  return themes;
+}
+
 // readSettings reads each field of a settings object. A field that is
 // missing or not valid is null, so the caller decides what to do.
 function readSettings(value: unknown, speeds: readonly number[], schemes: readonly Scheme[]): { [K in keyof Settings]: Settings[K] | null } {
-  if (!isRecord(value)) return { version: null, skipWaiting: null, colorScheme: null, autoRotate: null, followEdit: null, speed: null };
+  if (!isRecord(value)) return { version: null, skipWaiting: null, colorScheme: null, autoRotate: null, followEdit: null, speed: null, themes: null, projectThemes: null };
+  const themes = parseThemes(value['themes'], schemes);
   const scheme = value['colorScheme'];
   const speed = value['speed'];
+  const known = (name: string) => schemes.some((item) => item.name === name) || themes.some((item) => item.name === name);
+  const picks = value['projectThemes'];
+  const projectThemes: Record<string, string> = {};
+  if (isRecord(picks)) {
+    for (const [root, name] of Object.entries(picks)) {
+      if (root.startsWith('/') && typeof name === 'string' && known(name)) projectThemes[root] = name;
+    }
+  }
   return {
     version: value['version'] === 1 ? 1 : null,
     skipWaiting: bool(value, 'skipWaiting'),
-    colorScheme: typeof scheme === 'string' && schemes.some((item) => item.name === scheme) ? scheme : null,
+    colorScheme: typeof scheme === 'string' && known(scheme) ? scheme : null,
     autoRotate: bool(value, 'autoRotate'),
     followEdit: bool(value, 'followEdit'),
     speed: typeof speed === 'number' && speeds.includes(speed) ? speed : null,
+    themes,
+    projectThemes,
   };
 }
 
@@ -80,7 +119,7 @@ export function parseOptions(value: unknown): Result<Options> {
   if (version === null || skipWaiting === null || colorScheme === null || autoRotate === null || followEdit === null || speed === null) {
     return { ok: false, error: 'settings options have no valid defaults' };
   }
-  return { ok: true, value: { defaults: { version, skipWaiting, colorScheme, autoRotate, followEdit, speed }, speeds, colorSchemes } };
+  return { ok: true, value: { defaults: { version, skipWaiting, colorScheme, autoRotate, followEdit, speed, themes: read.themes ?? [], projectThemes: read.projectThemes ?? {} }, speeds, colorSchemes } };
 }
 
 // parseSettings reads a settings object. A field that is missing or not
@@ -95,6 +134,8 @@ export function parseSettings(value: unknown, options: Options): Settings {
     autoRotate: read.autoRotate ?? defaults.autoRotate,
     followEdit: read.followEdit ?? defaults.followEdit,
     speed: read.speed ?? defaults.speed,
+    themes: read.themes ?? [],
+    projectThemes: read.projectThemes ?? {},
   };
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -26,7 +27,7 @@ func TestLoadReturnsDefaultsWithoutAFile(t *testing.T) {
 	if got.Found {
 		t.Fatal("Load found a file that does not exist")
 	}
-	if got.Settings != Defaults() {
+	if !reflect.DeepEqual(got.Settings, Defaults()) {
 		t.Fatalf("Load = %+v, want %+v", got.Settings, Defaults())
 	}
 }
@@ -41,7 +42,7 @@ func TestLoadReadsAFullFile(t *testing.T) {
 	if !got.Found || len(got.Replaced) != 0 {
 		t.Fatalf("Load found = %v, replaced = %v; want found and nothing replaced", got.Found, got.Replaced)
 	}
-	if got.Settings != want {
+	if !reflect.DeepEqual(got.Settings, want) {
 		t.Fatalf("Load = %+v, want %+v", got.Settings, want)
 	}
 }
@@ -84,7 +85,7 @@ func TestLoadReplacesAFieldThatIsNotValid(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Load error = %v", err)
 			}
-			if got.Settings != test.want {
+			if !reflect.DeepEqual(got.Settings, test.want) {
 				t.Fatalf("Load = %+v, want %+v", got.Settings, test.want)
 			}
 			if len(got.Replaced) != len(test.replaced) {
@@ -111,7 +112,7 @@ func TestLoadReturnsDefaultsAndAnErrorForABrokenFile(t *testing.T) {
 			if err == nil {
 				t.Fatal("Load error = nil, want an error")
 			}
-			if got.Settings != Defaults() {
+			if !reflect.DeepEqual(got.Settings, Defaults()) {
 				t.Fatalf("Load = %+v, want %+v", got.Settings, Defaults())
 			}
 		})
@@ -128,7 +129,7 @@ func TestSaveThenLoadGivesTheSameSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load error = %v", err)
 	}
-	if got.Settings != want {
+	if !reflect.DeepEqual(got.Settings, want) {
 		t.Fatalf("Load = %+v, want %+v", got.Settings, want)
 	}
 	info, err := os.Stat(path)
@@ -142,7 +143,7 @@ func TestSaveThenLoadGivesTheSameSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "\n  \"speed\": 16\n") {
+	if !strings.Contains(string(data), "\n  \"speed\": 16,\n") {
 		t.Fatalf("file is not indented:\n%s", data)
 	}
 	entries, err := os.ReadDir(filepath.Dir(path))
@@ -182,6 +183,105 @@ func TestValidateNamesTheFieldThatIsNotValid(t *testing.T) {
 	}
 }
 
+func TestValidateChecksTheThemes(t *testing.T) {
+	theme := Scheme{Name: "warm", Label: "Warm", Colors: []string{"#ff0000", "#00ff00"}}
+	s := Defaults()
+	s.Themes = []Scheme{theme}
+	s.ColorScheme = "warm"
+	if err := Validate(s); err != nil {
+		t.Fatalf("Validate = %v, want nil", err)
+	}
+	tests := map[string]struct {
+		change func(*Settings)
+		text   string
+	}{
+		"name of a server scheme": {func(s *Settings) { s.Themes[0].Name = "default" }, "scheme of the server"},
+		"name of the wrong form":  {func(s *Settings) { s.Themes[0].Name = "Bad Name" }, "1 to 32 characters"},
+		"name that repeats":       {func(s *Settings) { s.Themes = append(s.Themes, theme) }, "repeats"},
+		"empty label":             {func(s *Settings) { s.Themes[0].Label = "" }, "label"},
+		"no colors":               {func(s *Settings) { s.Themes[0].Colors = nil }, "1 to 12 colors"},
+		"13 colors":               {func(s *Settings) { s.Themes[0].Colors = make([]string, 13) }, "1 to 12 colors"},
+		"color that is not hex":   {func(s *Settings) { s.Themes[0].Colors = []string{"red"} }, "#rrggbb"},
+		"color in upper case":     {func(s *Settings) { s.Themes[0].Colors = []string{"#FF0000"} }, "#rrggbb"},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			s := Defaults()
+			s.Themes = []Scheme{{Name: "warm", Label: "Warm", Colors: []string{"#ff0000"}}}
+			test.change(&s)
+			err := Validate(s)
+			if err == nil || !strings.HasPrefix(err.Error(), "themes:") {
+				t.Fatalf("Validate = %v, want a themes error", err)
+			}
+			if !strings.Contains(err.Error(), test.text) {
+				t.Fatalf("Validate = %q, want %q", err, test.text)
+			}
+		})
+	}
+}
+
+func TestLoadRemovesAThemeThatIsNotValid(t *testing.T) {
+	text := `{"version":1,"colorScheme":"bad","themes":[` +
+		`{"name":"good","label":"Good","colors":["#ff0000"]},` +
+		`{"name":"bad","label":"Bad","colors":["red"]}]}`
+	got, err := Load(writeSettings(t, text))
+	if err != nil {
+		t.Fatalf("Load error = %v", err)
+	}
+	if len(got.Settings.Themes) != 1 || got.Settings.Themes[0].Name != "good" {
+		t.Fatalf("Load kept %+v, want only the good theme", got.Settings.Themes)
+	}
+	// colorScheme named the removed theme, so it gets its default.
+	if got.Settings.ColorScheme != "default" {
+		t.Fatalf("Load colorScheme = %q, want default", got.Settings.ColorScheme)
+	}
+	if len(got.Replaced) != 2 {
+		t.Fatalf("Load replaced %v, want the theme and the color scheme", got.Replaced)
+	}
+}
+
+func TestLoadRemovesAProjectThemeThatIsNotValid(t *testing.T) {
+	text := `{"version":1,"themes":[{"name":"warm","label":"Warm","colors":["#ff0000"]}],` +
+		`"projectThemes":{"/a":"warm","/b":"nosuch","c":"warm"}}`
+	got, err := Load(writeSettings(t, text))
+	if err != nil {
+		t.Fatalf("Load error = %v", err)
+	}
+	if want := map[string]string{"/a": "warm"}; !reflect.DeepEqual(got.Settings.ProjectThemes, want) {
+		t.Fatalf("Load kept %v, want %v", got.Settings.ProjectThemes, want)
+	}
+	if len(got.Replaced) != 2 {
+		t.Fatalf("Load replaced %v, want the two bad entries", got.Replaced)
+	}
+}
+
+func TestValidateChecksTheProjectThemes(t *testing.T) {
+	s := Defaults()
+	s.ProjectThemes = map[string]string{"/a": "spring"}
+	if err := Validate(s); err != nil {
+		t.Fatalf("Validate = %v, want nil", err)
+	}
+	s.ProjectThemes = map[string]string{"/a": "nosuch"}
+	if err := Validate(s); err == nil || !strings.HasPrefix(err.Error(), "projectThemes:") {
+		t.Fatalf("Validate = %v, want a projectThemes error", err)
+	}
+	s.ProjectThemes = map[string]string{"a": "spring"}
+	if err := Validate(s); err == nil || !strings.Contains(err.Error(), "absolute") {
+		t.Fatalf("Validate = %v, want an absolute path error", err)
+	}
+}
+
+func TestLoadKeepsAColorSchemeThatNamesATheme(t *testing.T) {
+	text := `{"version":1,"colorScheme":"warm","themes":[{"name":"warm","label":"Warm","colors":["#ff0000"]}]}`
+	got, err := Load(writeSettings(t, text))
+	if err != nil {
+		t.Fatalf("Load error = %v", err)
+	}
+	if got.Settings.ColorScheme != "warm" || len(got.Replaced) != 0 {
+		t.Fatalf("Load = %+v with replaced %v, want the theme kept", got.Settings, got.Replaced)
+	}
+}
+
 func TestSchemesAreWellFormed(t *testing.T) {
 	if len(Schemes) == 0 || Schemes[0].Name != "default" {
 		t.Fatal("the first scheme must be default")
@@ -216,11 +316,12 @@ func TestSchemesAreWellFormed(t *testing.T) {
 func TestOptionsJSONFieldNames(t *testing.T) {
 	// web/src/settings/settings.ts reads these field names.
 	options := Options{
-		Defaults:     Settings{Version: 1, SkipWaiting: true, ColorScheme: "default", AutoRotate: true, FollowEdit: true, Speed: 1},
+		Defaults:     Settings{Version: 1, SkipWaiting: true, ColorScheme: "default", AutoRotate: true, FollowEdit: true, Speed: 1, Themes: []Scheme{{Name: "warm", Label: "Warm", Colors: []string{"#ff0000"}}}},
 		Speeds:       []float64{1, 2},
 		ColorSchemes: []Scheme{{Name: "default", Label: "Default", Colors: []string{"#3987e5"}}},
 	}
-	want := `{"defaults":{"version":1,"skipWaiting":true,"colorScheme":"default","autoRotate":true,"followEdit":true,"speed":1},` +
+	want := `{"defaults":{"version":1,"skipWaiting":true,"colorScheme":"default","autoRotate":true,"followEdit":true,"speed":1,` +
+		`"themes":[{"name":"warm","label":"Warm","colors":["#ff0000"]}],"projectThemes":null},` +
 		`"speeds":[1,2],"colorSchemes":[{"name":"default","label":"Default","colors":["#3987e5"]}]}`
 	if data, err := json.Marshal(options); err != nil || string(data) != want {
 		t.Errorf("options JSON = %s, %v, want %s", data, err, want)

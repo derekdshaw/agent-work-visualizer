@@ -129,6 +129,7 @@
 <dialog class="settings" id="dlgSettings" aria-labelledby="setTitle">
   <form id="setForm" novalidate>
     <h2 id="setTitle">SETTINGS</h2>
+    <div id="setMain">
     <section>
       <h3>Playback</h3>
       <label class="setrow" title="During playback, the playhead jumps over the spans where the agent waited for your next prompt."><input type="checkbox" id="setSkip"><span>Skip the time the agent waits for you</span></label>
@@ -136,7 +137,15 @@
     <section>
       <h3>Theme</h3>
       <p class="setnote setdesc">The colors of the packages in the graph. Each package gets one color from the theme, in name order, and the colors repeat lighter and darker when there are more packages than colors.</p>
-      <fieldset class="setgroup" id="setSchemes" aria-label="Theme"></fieldset>
+      <label class="setrow" title="The theme of the open working tree. Another working tree keeps its own pick, or the default theme."><span>Theme for this project</span><select id="setProjectTheme"></select></label>
+      <div class="swatches row" id="setProjectSw"></div>
+      <label class="setrow" title="The theme of each working tree that has no pick of its own."><span>Default theme</span><select id="setDefaultTheme"></select></label>
+      <div class="swatches row" id="setDefaultSw"></div>
+      <div class="themebtns">
+        <button class="btn icon" id="setAddTheme" type="button" title="New theme: a copy of the selected theme" aria-label="New theme">+</button>
+        <button class="btn icon" id="setEditTheme" type="button" title="Edit this theme" aria-label="Edit this theme">✎</button>
+        <button class="btn icon" id="setDelTheme" type="button" title="Delete this theme" aria-label="Delete this theme">🗑</button>
+      </div>
     </section>
     <section>
       <h3>When the page opens</h3>
@@ -152,6 +161,19 @@
       <button class="btn txt" id="setReset" type="button" title="Show the default settings. Save keeps them.">RESET</button>
       <button class="btn txt" id="setCancel" type="button">CANCEL</button>
       <button class="btn txt" id="setSave" type="submit">SAVE</button>
+    </div>
+    </div>
+    <div id="setEditor" hidden>
+      <label class="setrow"><span>Name</span><input type="text" id="setThemeLabel" maxlength="40" spellcheck="false"></label>
+      <p class="setnote" id="setThemeName"></p>
+      <div id="setColors"></div>
+      <button class="btn txt" id="setAddColor" type="button" title="Add a copy of the last color">ADD COLOR</button>
+      <p class="setnote setdesc">The order of the colors decides which package gets which color. Drag a color to reorder.</p>
+      <div class="pkgpreview" id="setPreview"></div>
+      <div class="setbtns">
+        <button class="btn txt" id="setEditCancel" type="button" title="Drop the changes of this editor">CANCEL</button>
+        <button class="btn txt" id="setEditDone" type="button">DONE</button>
+      </div>
     </div>
   </form>
 </dialog>

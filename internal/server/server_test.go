@@ -280,7 +280,7 @@ func TestServeSettingsReturnsTheDefaultsAndTheOptions(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Settings != settings.Defaults() {
+	if !reflect.DeepEqual(got.Settings, settings.Defaults()) {
 		t.Fatalf("GET /api/settings settings = %+v, want %+v", got.Settings, settings.Defaults())
 	}
 	if !reflect.DeepEqual(got.Options, settings.AllOptions()) {
@@ -302,17 +302,17 @@ func TestSaveSettingsKeepsValidSettingsAndWritesTheFile(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&answer); err != nil {
 		t.Fatal(err)
 	}
-	if answer != want {
+	if !reflect.DeepEqual(answer, want) {
 		t.Fatalf("POST /api/settings answer = %+v, want %+v", answer, want)
 	}
-	if got := getSettings(t, server.URL); got != want {
+	if got := getSettings(t, server.URL); !reflect.DeepEqual(got, want) {
 		t.Fatalf("GET /api/settings = %+v, want %+v", got, want)
 	}
 	saved, err := settings.Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if saved.Settings != want {
+	if !reflect.DeepEqual(saved.Settings, want) {
 		t.Fatalf("settings file holds %+v, want %+v", saved.Settings, want)
 	}
 }
@@ -341,7 +341,7 @@ func TestSaveSettingsRejectsSettingsThatAreNotValid(t *testing.T) {
 			t.Fatalf("POST /api/settings with %s answered %q, want %q", name, text, test.text)
 		}
 	}
-	if got := getSettings(t, server.URL); got != settings.Defaults() {
+	if got := getSettings(t, server.URL); !reflect.DeepEqual(got, settings.Defaults()) {
 		t.Fatalf("GET /api/settings after a bad POST = %+v, want the defaults", got)
 	}
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
@@ -1419,7 +1419,7 @@ func expectEvent(t *testing.T, events <-chan serverEvent, want serverEvent) {
 		if !ok {
 			t.Fatalf("stream ended, want %+v", want)
 		}
-		if got != want {
+		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("event = %+v, want %+v", got, want)
 		}
 	case <-time.After(5 * time.Second):

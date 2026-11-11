@@ -370,34 +370,59 @@ and a new theme is a code change.
 - **The picker is the browser's.** Each color is an `<input type="color">`.
   The browser's picker has a spectrum or a wheel and a hex field, and the
   page needs no new dependency and no network.
+- **A project can have its own theme.** `colorScheme` is the default
+  theme, for each working tree without a pick. `projectThemes` maps the
+  absolute root path of a working tree to a theme name. The page shows
+  the pick of the open tree, or the default theme when the tree has no
+  pick. The root path is the one that `GET /api/graph` returns.
+- **Dropdowns, not radio buttons.** The number of themes has no limit, so
+  the Theme section uses `<select>` lists. A native list jumps to an
+  entry when the viewer types its first letters, and works with the
+  keyboard and screen readers. The swatch row of the selected theme shows
+  under each list.
 
 ### Result
 
 **Server** (`internal/settings`)
 
-- `Settings` gets a field `themes`: a list of `Scheme`. The default is an
-  empty list. `Validate` checks each theme: the `name` has the valid form,
+- `Settings` gets a field `themes`: a list of `Scheme`, and a field
+  `projectThemes`: a map from a root path to a theme name. The defaults
+  are empty. `Validate` checks each theme: the `name` has the valid form,
   is not the name of a scheme in `Schemes`, and is unique in the list;
   the `label` is 1 to 40 characters; `colors` has 1 to 12 items, each a
   `#rrggbb` string in lower case. `colorScheme` is valid if it names a
-  scheme in `Schemes` or a theme in `themes`.
+  scheme in `Schemes` or a theme in `themes`. Each value of
+  `projectThemes` must also name a scheme or a theme, and each key must
+  be an absolute path.
 - `Load` removes a theme that is not valid, and puts it in `Replaced`.
-  If `colorScheme` names a removed theme, it gets its default.
+  If `colorScheme` names a removed theme, it gets its default. A
+  `projectThemes` entry with a key that is not absolute or a value that
+  names no theme is removed, and goes in `Replaced`.
 - `Save` writes the themes in the file, as part of `Settings`.
 - `GET /api/settings` and `POST /api/settings` need no change, because
   the themes are part of `Settings`.
 
 **Page**
 
-- `Settings` in `web/src/settings/settings.ts` gets `themes: Scheme[]`.
-  `parseSettings` reads it with `parseScheme`, and drops a theme that is
-  not valid. `applyColorScheme` finds the scheme in `options.colorSchemes`
-  and then in `settings.themes`.
-- The Theme section of the dialog lists the schemes of the server, then
-  the custom themes. Each row has a radio button, the label, and the
-  swatch row. Each swatch has hover text that names the packages of the
-  open graph that get that color, for example "pkg/analyzer, pkg/session".
-  The dialog gets the package list from `graph.modules` when it opens.
+- `Settings` in `web/src/settings/settings.ts` gets `themes: Scheme[]`
+  and `projectThemes: Record<string, string>`. `parseSettings` reads them
+  and drops an entry that is not valid. `themeFor(settings, root)` returns
+  the pick of the root, or `colorScheme`. `applyColorScheme` takes a
+  name, finds it in `options.colorSchemes` and then in `settings.themes`,
+  and the page calls it with `themeFor(settings, graph.payload.root)`:
+  at startup, after a save, and in `applyGraph` when the page opens
+  another working tree.
+- The Theme section of the dialog has two lists. "Theme for this project"
+  has a first entry "Use the default theme", then the schemes of the
+  server and the custom themes; it sets `projectThemes[root]`, or removes
+  the entry for the first item. It is disabled when no working tree is
+  open. "Default theme" has the schemes and the themes, and sets
+  `colorScheme`. Under each list, a swatch row shows the colors of the
+  selected theme. Each swatch has hover text that names the packages of
+  the open graph that get that color, for example "pkg/analyzer,
+  pkg/session". The dialog gets the root and the package list from the
+  graph when it opens. Edit and Delete apply to the theme in the default
+  list.
 - Buttons in the Theme section:
   - **+** makes a new theme. Its colors are a copy of the selected theme.
     Its label is "Theme N", where N is the smallest number that is not in
@@ -405,11 +430,12 @@ and a new theme is a code change.
     unique with a number if necessary. The new theme is selected, and
     the editor opens.
   - **Edit**, a pencil icon with the hover text "Edit this theme", opens
-    the editor for the selected theme. It is disabled when a scheme of
-    the server is selected.
+    the editor for the theme in the default list. It is disabled when a
+    scheme of the server is selected there.
   - **Delete**, a trash can icon with the hover text "Delete this theme",
-    removes the selected theme and selects the default scheme. It is
-    disabled when a scheme of the server is selected.
+    removes that theme, selects the default scheme in the default list,
+    and removes each project pick that named the theme. It is disabled
+    when a scheme of the server is selected.
   - The icon buttons have an `aria-label` with the same text as the hover
     text, and the look of the other icon buttons of the page.
 - **The editor** is a second view in the same `<dialog>`. It has:
@@ -440,12 +466,14 @@ and a new theme is a code change.
 
 ### Procedure
 
-1. Add `Themes` to `Settings` and the checks to `Validate` and `Load`.
-   Add the tests: a valid theme, a theme that uses the name `default`,
-   a theme with a color that is not `#rrggbb`, a theme with 13 colors,
-   a `colorScheme` that names a theme, and `Load` with a theme that is
-   not valid.
-2. Add `themes` to `settings.ts` and `parseSettings`, with tests.
+1. Add `Themes` and `ProjectThemes` to `Settings` and the checks to
+   `Validate` and `Load`. Add the tests: a valid theme, a theme that uses
+   the name `default`, a theme with a color that is not `#rrggbb`, a
+   theme with 13 colors, a `colorScheme` that names a theme, `Load` with
+   a theme that is not valid, and `Load` with a project pick that names
+   no theme.
+2. Add `themes`, `projectThemes`, and `themeFor` to `settings.ts` and
+   `parseSettings`, with tests.
 3. Make the editor view in `web/index.html` and
    `web/src/ui/settingsDialog.ts`. `open` takes the package list.
    `applyColorScheme` in `main.ts` takes the colors to apply, so the
@@ -469,12 +497,20 @@ and a new theme is a code change.
    of a row and press Up. The row moves up.
 4. Remove colors until one remains. The remove button is disabled. Each
    package in the preview has a variation of that color.
-5. Click Done, then Save. Reload. The theme is selected and the graph
-   has its colors. The settings file holds the theme.
-6. Open the dialog, select Default, click Edit. The button is disabled.
-   Select the custom theme, click Delete. Default is selected. Click
-   Cancel. Open the dialog. The custom theme is still there, because
-   Cancel discards the deletion.
+5. Click Done. Select the new theme in "Default theme", then Save.
+   Reload. The graph has its colors. The settings file holds the theme.
+6. Open the dialog, select Default in the default list, click Edit. The
+   button is disabled. Select the custom theme, click Delete. Default is
+   selected. Click Cancel. Open the dialog. The custom theme is still
+   there, because Cancel discards the deletion.
+6a. Select Spring in "Theme for this project" and Save. The graph shows
+    Spring. The settings file has the root path of this working tree
+    under `projectThemes`. Open another working tree from the title bar.
+    The graph shows the default theme. Open this one again. The graph
+    shows Spring.
+6b. Edit the settings file by hand: give the project pick the value
+    `"nosuch"`. Reload. The server logs that it replaced the pick, and
+    the graph shows the default theme.
 7. Edit the settings file by hand: give the theme the color `"red"`.
    Reload. The server logs that it replaced the theme, and the dialog
    does not show it.

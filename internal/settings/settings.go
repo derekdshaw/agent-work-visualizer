@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -31,6 +32,12 @@ type Settings struct {
 	AutoRotate bool    `json:"autoRotate"`
 	FollowEdit bool    `json:"followEdit"`
 	Speed      float64 `json:"speed"`
+	// Themes holds the custom themes of the viewer. The schemes in Schemes
+	// stay in Go and are read-only; ColorScheme can name either.
+	Themes []Scheme `json:"themes"`
+	// ProjectThemes maps the absolute root path of a working tree to the
+	// theme of that tree. A tree without an entry uses ColorScheme.
+	ProjectThemes map[string]string `json:"projectThemes"`
 }
 
 // Speeds lists the valid values of Speed.
@@ -76,6 +83,9 @@ func AllOptions() Options {
 
 // schemeName matches a valid color scheme name.
 var schemeName = regexp.MustCompile(`^[a-z0-9-]{1,32}$`)
+
+// hexColor matches one color of a theme.
+var hexColor = regexp.MustCompile(`^#[0-9a-f]{6}$`)
 
 // Defaults returns the settings that apply when the file does not exist.
 func Defaults() Settings {
@@ -132,9 +142,38 @@ func Load(path string) (Loaded, error) {
 	}
 	loaded := Loaded{Found: true}
 	defaults := Defaults()
-	if err := validColorScheme(s.ColorScheme); err != nil {
+	kept := make([]Scheme, 0, len(s.Themes))
+	seen := map[string]bool{}
+	for _, theme := range s.Themes {
+		err := validTheme(theme)
+		if err == nil && seen[theme.Name] {
+			err = fmt.Errorf("themes: the name %q repeats", theme.Name)
+		}
+		if err != nil {
+			loaded.Replaced = append(loaded.Replaced, err)
+			continue
+		}
+		seen[theme.Name] = true
+		kept = append(kept, theme)
+	}
+	// An empty list stays nil, so a Settings without themes compares equal
+	// no matter where it came from.
+	s.Themes = kept
+	if len(kept) == 0 {
+		s.Themes = nil
+	}
+	if err := validColorScheme(s.ColorScheme, s.Themes); err != nil {
 		loaded.Replaced = append(loaded.Replaced, err)
 		s.ColorScheme = defaults.ColorScheme
+	}
+	for root, name := range s.ProjectThemes {
+		if err := validProjectTheme(root, name, s.Themes); err != nil {
+			loaded.Replaced = append(loaded.Replaced, err)
+			delete(s.ProjectThemes, root)
+		}
+	}
+	if len(s.ProjectThemes) == 0 {
+		s.ProjectThemes = nil
 	}
 	if err := validSpeed(s.Speed); err != nil {
 		loaded.Replaced = append(loaded.Replaced, err)
@@ -150,10 +189,59 @@ func Validate(s Settings) error {
 	if err := validVersion(s.Version); err != nil {
 		return err
 	}
-	if err := validColorScheme(s.ColorScheme); err != nil {
+	seen := map[string]bool{}
+	for _, theme := range s.Themes {
+		if err := validTheme(theme); err != nil {
+			return err
+		}
+		if seen[theme.Name] {
+			return fmt.Errorf("themes: the name %q repeats", theme.Name)
+		}
+		seen[theme.Name] = true
+	}
+	if err := validColorScheme(s.ColorScheme, s.Themes); err != nil {
 		return err
 	}
+	for _, root := range slices.Sorted(maps.Keys(s.ProjectThemes)) {
+		if err := validProjectTheme(root, s.ProjectThemes[root], s.Themes); err != nil {
+			return err
+		}
+	}
 	return validSpeed(s.Speed)
+}
+
+// validProjectTheme checks one entry of ProjectThemes.
+func validProjectTheme(root string, name string, themes []Scheme) error {
+	if !filepath.IsAbs(root) {
+		return fmt.Errorf("projectThemes: %q is not an absolute path", root)
+	}
+	if err := validColorScheme(name, themes); err != nil {
+		return fmt.Errorf("projectThemes: %s: %w", root, err)
+	}
+	return nil
+}
+
+// validTheme checks one custom theme, apart from the uniqueness of its name
+// in the list.
+func validTheme(theme Scheme) error {
+	if !schemeName.MatchString(theme.Name) {
+		return fmt.Errorf("themes: name %q must be 1 to 32 characters of a-z, 0-9, and -", theme.Name)
+	}
+	if slices.ContainsFunc(Schemes, func(s Scheme) bool { return s.Name == theme.Name }) {
+		return fmt.Errorf("themes: %q is the name of a scheme of the server", theme.Name)
+	}
+	if theme.Label == "" || len(theme.Label) > 40 {
+		return fmt.Errorf("themes: %q: the label must be 1 to 40 characters", theme.Name)
+	}
+	if len(theme.Colors) == 0 || len(theme.Colors) > 12 {
+		return fmt.Errorf("themes: %q: 1 to 12 colors are necessary", theme.Name)
+	}
+	for _, color := range theme.Colors {
+		if !hexColor.MatchString(color) {
+			return fmt.Errorf("themes: %q: color %q is not #rrggbb in lower case", theme.Name, color)
+		}
+	}
+	return nil
 }
 
 func validVersion(version int) error {
@@ -163,8 +251,9 @@ func validVersion(version int) error {
 	return nil
 }
 
-func validColorScheme(name string) error {
-	if !slices.ContainsFunc(Schemes, func(s Scheme) bool { return s.Name == name }) {
+func validColorScheme(name string, themes []Scheme) error {
+	known := func(s Scheme) bool { return s.Name == name }
+	if !slices.ContainsFunc(Schemes, known) && !slices.ContainsFunc(themes, known) {
 		return fmt.Errorf("colorScheme: %q is not a known scheme", name)
 	}
 	return nil

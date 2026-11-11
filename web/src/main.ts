@@ -5,7 +5,7 @@ import { connect, getJSON, getText, postJSON } from './net/live.ts';
 import { type Ev, type Header, isRecord, parseLine, parseLog, type Result } from './session/events.ts';
 import { fold, heatTarget, LOCK_T, nextEditTime, type Phase, previousEditTime, thinkingSpans, type ViewState, waitingSpans } from './session/reduce.ts';
 import { playback } from './settings/playback.ts';
-import { loadSettings, type Options, saveSettings, type Scheme, type Settings } from './settings/settings.ts';
+import { loadSettings, type Options, saveSettings, type Scheme, type Settings, themeFor } from './settings/settings.ts';
 import { GroupLabels } from './ui/labels.ts';
 import { type BlastItem, fmt, Panes } from './ui/panes.ts';
 import { SettingsDialog } from './ui/settingsDialog.ts';
@@ -231,6 +231,9 @@ async function applyGraph(payload: GraphPayload, sameView: boolean): Promise<voi
     activeFile = '';
     lastEdit = -1;
   }
+  // The working tree can have its own theme. It must be in place before
+  // the scene reads the palette.
+  if (currentSettings) applyColorScheme(themeFor(currentSettings, payload.root));
   scene.setGraph(next, result, sameView);
   labels.setGraph(next, payload.root.split('/').pop() || '.');
   ui.meta.textContent = `${next.n} NODES · ${next.edges.length} EDGES`;
@@ -301,13 +304,14 @@ function applyStartup(settings: Settings, options: Options): void {
   }
   setSpeedUI();
   playback.skipWaiting = settings.skipWaiting;
-  applyColorScheme(settings.colorScheme);
+  applyColorScheme(themeFor(settings, graph.payload.root));
 }
 
 // applyColorScheme sets the package colors of the graph from a scheme of the
 // server. A name that the server does not know uses the first scheme.
 function applyColorScheme(name: string): void {
-  const scheme = schemes.find((item) => item.name === name) ?? schemes[0];
+  const all = [...schemes, ...(currentSettings?.themes ?? [])];
+  const scheme = all.find((item) => item.name === name) ?? all[0];
   if (!scheme) return;
   document.documentElement.style.setProperty('--package-colors', scheme.colors.join(', '));
   scene.recolor();
@@ -486,13 +490,21 @@ let speed = 1;
 let currentSettings: Settings | null = null;
 let currentOptions: Options | null = null;
 
+const settingsDialogElement = byId('dlgSettings', HTMLDialogElement);
 const settingsDialog = new SettingsDialog(
   {
-    dialog: byId('dlgSettings', HTMLDialogElement),
+    dialog: settingsDialogElement,
     form: byId('setForm', HTMLFormElement),
     opener: ui.settings,
+    main: byId('setMain', HTMLElement),
     skipWaiting: byId('setSkip', HTMLInputElement),
-    schemes: byId('setSchemes', HTMLElement),
+    projectTheme: byId('setProjectTheme', HTMLSelectElement),
+    projectSwatches: byId('setProjectSw', HTMLElement),
+    defaultTheme: byId('setDefaultTheme', HTMLSelectElement),
+    defaultSwatches: byId('setDefaultSw', HTMLElement),
+    addTheme: byId('setAddTheme', HTMLButtonElement),
+    editTheme: byId('setEditTheme', HTMLButtonElement),
+    deleteTheme: byId('setDelTheme', HTMLButtonElement),
     autoRotate: byId('setRotate', HTMLInputElement),
     motionNote: byId('setMotion', HTMLElement),
     followEdit: byId('setFollow', HTMLInputElement),
@@ -501,33 +513,53 @@ const settingsDialog = new SettingsDialog(
     reset: byId('setReset', HTMLButtonElement),
     cancel: byId('setCancel', HTMLButtonElement),
     save: byId('setSave', HTMLButtonElement),
+    editor: byId('setEditor', HTMLElement),
+    editorLabel: byId('setThemeLabel', HTMLInputElement),
+    editorName: byId('setThemeName', HTMLElement),
+    editorRows: byId('setColors', HTMLElement),
+    addColor: byId('setAddColor', HTMLButtonElement),
+    preview: byId('setPreview', HTMLElement),
+    editorDone: byId('setEditDone', HTMLButtonElement),
+    editorCancel: byId('setEditCancel', HTMLButtonElement),
   },
   reducedMotion,
-  async (next) => {
-    if (!currentSettings || !currentOptions) return { ok: false, error: 'The settings are not loaded yet.' };
-    const result = await saveSettings(next, currentOptions);
-    if (result.ok) {
-      const previous = currentSettings;
-      currentSettings = result.value;
-      // Skip waits and the color scheme apply to the open page at once. The
-      // startup settings apply at the next startup.
-      playback.skipWaiting = result.value.skipWaiting;
-      applyColorScheme(result.value.colorScheme);
-      // A new speed setting clears the last clicked speed, so it applies at
-      // the next startup.
-      if (result.value.speed !== previous.speed) {
-        try {
-          localStorage.removeItem(SPEED_KEY);
-        } catch {
-          // Without storage, there is no last speed to clear.
+  {
+    async onSave(next: Settings) {
+      if (!currentSettings || !currentOptions) return { ok: false, error: 'The settings are not loaded yet.' };
+      const result = await saveSettings(next, currentOptions);
+      if (result.ok) {
+        const previous = currentSettings;
+        currentSettings = result.value;
+        // Skip waits applies to the open page at once. The color scheme
+        // applies when the dialog closes. The startup settings apply at the
+        // next startup.
+        playback.skipWaiting = result.value.skipWaiting;
+        // A new speed setting clears the last clicked speed, so it applies
+        // at the next startup.
+        if (result.value.speed !== previous.speed) {
+          try {
+            localStorage.removeItem(SPEED_KEY);
+          } catch {
+            // Without storage, there is no last speed to clear.
+          }
         }
       }
-    }
-    return result;
+      return result;
+    },
+    preview(colors: readonly string[]) {
+      if (colors.length === 0) return;
+      document.documentElement.style.setProperty('--package-colors', colors.join(', '));
+      scene.recolor();
+    },
   },
 );
+// The saved scheme comes back when the dialog closes: the old one after
+// Cancel, the new one after Save, and no editor preview stays.
+settingsDialogElement.addEventListener('close', () => {
+  if (currentSettings) applyColorScheme(themeFor(currentSettings, graph.payload.root));
+});
 ui.settings.addEventListener('click', () => {
-  if (currentSettings && currentOptions) settingsDialog.open(currentSettings, currentOptions);
+  if (currentSettings && currentOptions) settingsDialog.open(currentSettings, currentOptions, graph.modules, graph.payload.root);
 });
 function setSpeedUI(): void {
   ui.speed.textContent = `${speed}×`;

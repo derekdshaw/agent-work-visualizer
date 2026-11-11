@@ -137,15 +137,19 @@
     <section>
       <h3>Theme</h3>
       <p class="setnote setdesc">The colors of the packages in the graph. Each package gets one color from the theme, in name order, and the colors repeat lighter and darker when there are more packages than colors.</p>
-      <label class="setrow" title="The theme of the open working tree. Another working tree keeps its own pick, or the default theme."><span>Theme for this project</span><select id="setProjectTheme"></select></label>
-      <div class="swatches row" id="setProjectSw"></div>
-      <label class="setrow" title="The theme of each working tree that has no pick of its own."><span>Default theme</span><select id="setDefaultTheme"></select></label>
-      <div class="swatches row" id="setDefaultSw"></div>
-      <div class="themebtns">
-        <button class="btn icon" id="setAddTheme" type="button" title="New theme: a copy of the selected theme" aria-label="New theme">+</button>
+      <h4>Project default</h4>
+      <div class="themepick" title="The theme of the open working tree. Another working tree keeps its own pick, or the global default.">
+        <select id="setProjectTheme" aria-label="Project default theme"></select>
+        <button class="btn icon" id="setAddTheme" type="button" title="New theme: a copy of this theme" aria-label="New theme">+</button>
         <button class="btn icon" id="setEditTheme" type="button" title="Edit this theme" aria-label="Edit this theme">✎</button>
         <button class="btn icon" id="setDelTheme" type="button" title="Delete this theme" aria-label="Delete this theme">🗑</button>
       </div>
+      <div class="swatches row" id="setProjectSw"></div>
+      <h4>Global default</h4>
+      <div class="themepick" title="The theme of each working tree that has no pick of its own.">
+        <select id="setDefaultTheme" aria-label="Global default theme"></select>
+      </div>
+      <div class="swatches row" id="setDefaultSw"></div>
     </section>
     <section>
       <h3>When the page opens</h3>

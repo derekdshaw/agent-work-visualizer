@@ -61,9 +61,11 @@ export class SettingsDialog {
   private packages: string[] = [];
   private root = '';
   // The themes and the project picks while the dialog is open. Save sends
-  // them; Cancel drops them.
+  // them; Cancel drops them. defaultSelection is the global default list,
+  // kept here so a rebuild does not lose it.
   private themes: Scheme[] = [];
   private projectThemes: Record<string, string> = {};
+  private defaultSelection = 'default';
   // The theme in the editor, and its state before the editor opened.
   private editing = -1;
   private before: Scheme | null = null;
@@ -80,13 +82,23 @@ export class SettingsDialog {
     });
     el.dialog.addEventListener('close', () => el.opener.focus());
     el.defaultTheme.addEventListener('change', () => {
-      this.showSwatches(el.defaultSwatches, this.selectedName());
+      this.defaultSelection = el.defaultTheme.value;
+      this.showSwatches(el.defaultSwatches, this.defaultSelection);
+      this.showSwatches(el.projectSwatches, this.projectName());
       this.updateThemeButtons();
     });
-    el.projectTheme.addEventListener('change', () => this.showSwatches(el.projectSwatches, this.projectPick() ?? this.selectedName()));
+    el.projectTheme.addEventListener('change', () => {
+      // The pick lives in the map at once, so a rebuild keeps it.
+      if (this.root) {
+        if (el.projectTheme.value) this.projectThemes[this.root] = el.projectTheme.value;
+        else delete this.projectThemes[this.root];
+      }
+      this.showSwatches(el.projectSwatches, this.projectName());
+      this.updateThemeButtons();
+    });
     el.addTheme.addEventListener('click', () => this.addNewTheme());
     el.editTheme.addEventListener('click', () => {
-      const index = this.themes.findIndex((theme) => theme.name === this.selectedName());
+      const index = this.themes.findIndex((theme) => theme.name === this.projectName());
       if (index >= 0) this.openEditor(index);
     });
     el.deleteTheme.addEventListener('click', () => this.deleteSelected());
@@ -128,15 +140,10 @@ export class SettingsDialog {
     this.el.skipWaiting.focus();
   }
 
-  // selectedName is the theme in the default list.
-  private selectedName(): string {
-    return this.el.defaultTheme.value || this.options?.colorSchemes[0]?.name || 'default';
-  }
-
-  // projectPick is the theme in the project list, or null for "Use the
-  // default theme".
-  private projectPick(): string | null {
-    return this.el.projectTheme.value || null;
+  // projectName is the theme that the open working tree shows: its pick,
+  // or the global default. The New, Edit, and Delete buttons act on it.
+  private projectName(): string {
+    return (this.root && this.projectThemes[this.root]) || this.defaultSelection;
   }
 
   private allSchemes(): Scheme[] {
@@ -153,8 +160,8 @@ export class SettingsDialog {
   }
 
   // buildSchemes fills both lists with the schemes of the server, then the
-  // custom themes. The project list has "Use the default theme" first.
-  private buildSchemes(selected: string): void {
+  // custom themes. The project list has "Use the global default" first.
+  private buildSchemes(): void {
     const all = this.allSchemes();
     const option = (value: string, text: string) => {
       const item = document.createElement('option');
@@ -162,14 +169,15 @@ export class SettingsDialog {
       item.textContent = text;
       return item;
     };
+    if (!all.some((scheme) => scheme.name === this.defaultSelection)) this.defaultSelection = all[0]?.name ?? 'default';
     this.el.defaultTheme.replaceChildren(...all.map((scheme) => option(scheme.name, scheme.label)));
-    this.el.defaultTheme.value = all.some((scheme) => scheme.name === selected) ? selected : (all[0]?.name ?? '');
-    this.el.projectTheme.replaceChildren(option('', 'Use the default theme'), ...all.map((scheme) => option(scheme.name, scheme.label)));
+    this.el.defaultTheme.value = this.defaultSelection;
+    this.el.projectTheme.replaceChildren(option('', 'Use the global default'), ...all.map((scheme) => option(scheme.name, scheme.label)));
     const pick = this.root ? this.projectThemes[this.root] : undefined;
     this.el.projectTheme.value = pick && all.some((scheme) => scheme.name === pick) ? pick : '';
     this.el.projectTheme.disabled = this.root === '';
-    this.showSwatches(this.el.defaultSwatches, this.selectedName());
-    this.showSwatches(this.el.projectSwatches, this.projectPick() ?? this.selectedName());
+    this.showSwatches(this.el.defaultSwatches, this.defaultSelection);
+    this.showSwatches(this.el.projectSwatches, this.projectName());
     this.updateThemeButtons();
   }
 
@@ -188,10 +196,10 @@ export class SettingsDialog {
     });
   }
 
-  // updateThemeButtons disables Edit and Delete when a scheme of the server
-  // is selected, because only custom themes change.
+  // updateThemeButtons disables Edit and Delete when the project shows a
+  // scheme of the server, because only custom themes change.
   private updateThemeButtons(): void {
-    const custom = this.themes.some((theme) => theme.name === this.selectedName());
+    const custom = this.themes.some((theme) => theme.name === this.projectName());
     this.el.editTheme.disabled = !custom;
     this.el.deleteTheme.disabled = !custom;
   }
@@ -208,7 +216,8 @@ export class SettingsDialog {
 
   private fill(settings: Settings): void {
     this.el.skipWaiting.checked = settings.skipWaiting;
-    this.buildSchemes(settings.colorScheme);
+    this.defaultSelection = settings.colorScheme;
+    this.buildSchemes();
     this.el.autoRotate.checked = settings.autoRotate;
     this.el.followEdit.checked = settings.followEdit;
     this.el.speed.value = String(settings.speed);
@@ -216,15 +225,10 @@ export class SettingsDialog {
 
   private read(): Settings {
     const projectThemes = { ...this.projectThemes };
-    if (this.root) {
-      const pick = this.projectPick();
-      if (pick) projectThemes[this.root] = pick;
-      else delete projectThemes[this.root];
-    }
     return {
       version: this.options?.defaults.version ?? 1,
       skipWaiting: this.el.skipWaiting.checked,
-      colorScheme: this.selectedName(),
+      colorScheme: this.defaultSelection,
       autoRotate: this.el.autoRotate.checked,
       followEdit: this.el.followEdit.checked,
       speed: Number(this.el.speed.value),
@@ -235,11 +239,12 @@ export class SettingsDialog {
 
   // ---- Themes ------------------------------------------------------------
 
-  // addNewTheme makes a theme with the colors of the selected scheme and
-  // opens the editor for it.
+  // addNewTheme makes a theme with the colors of the theme that the project
+  // shows, picks it for the project, and opens the editor for it. Without a
+  // working tree, it becomes the global default instead.
   private addNewTheme(): void {
     const all = this.allSchemes();
-    const source = all.find((scheme) => scheme.name === this.selectedName()) ?? all[0];
+    const source = all.find((scheme) => scheme.name === this.projectName()) ?? all[0];
     if (!source) return;
     let n = 1;
     while (this.themes.some((theme) => theme.label === `Theme ${n}`)) n++;
@@ -248,21 +253,25 @@ export class SettingsDialog {
     let name = label.toLowerCase().replaceAll(' ', '-');
     for (let i = 2; taken(name); i++) name = `theme-${n}-${i}`;
     this.themes.push({ name, label, colors: [...source.colors] });
-    this.buildSchemes(name);
+    if (this.root) this.projectThemes[this.root] = name;
+    else this.defaultSelection = name;
+    this.buildSchemes();
     this.openEditor(this.themes.length - 1);
   }
 
-  // deleteSelected removes the theme in the default list, and each project
-  // pick that named it.
+  // deleteSelected removes the theme that the project shows, and each
+  // project pick that named it. A global default that named it falls back
+  // to the first scheme.
   private deleteSelected(): void {
-    const name = this.selectedName();
+    const name = this.projectName();
     const index = this.themes.findIndex((theme) => theme.name === name);
     if (index < 0) return;
     this.themes.splice(index, 1);
     for (const [root, pick] of Object.entries(this.projectThemes)) {
       if (pick === name) delete this.projectThemes[root];
     }
-    this.buildSchemes(this.options?.colorSchemes[0]?.name ?? 'default');
+    if (this.defaultSelection === name) this.defaultSelection = this.options?.colorSchemes[0]?.name ?? 'default';
+    this.buildSchemes();
   }
 
   // renameEditing takes the label of the editor. The name follows the
@@ -272,12 +281,18 @@ export class SettingsDialog {
     if (!theme) return;
     const label = this.el.editorLabel.value.trim().slice(0, 40) || 'Theme';
     theme.label = label;
+    const previous = theme.name;
     const others = (this.options ? [...this.options.colorSchemes] : []).concat(this.themes.filter((t) => t !== theme));
     const base = label.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-').replaceAll(/^-+|-+$/g, '').slice(0, 28) || 'theme';
     let name = base;
     for (let i = 2; others.some((scheme) => scheme.name === name); i++) name = `${base}-${i}`;
     theme.name = name;
     this.el.editorName.textContent = name;
+    // The picks and the global default follow a rename.
+    for (const [root, pick] of Object.entries(this.projectThemes)) {
+      if (pick === previous) this.projectThemes[root] = name;
+    }
+    if (this.defaultSelection === previous) this.defaultSelection = name;
   }
 
   // ---- The editor --------------------------------------------------------
@@ -298,13 +313,20 @@ export class SettingsDialog {
   // back to its state before the editor opened.
   private closeEditor(keep: boolean): void {
     const theme = this.themes[this.editing];
-    if (!keep && theme && this.before) this.themes[this.editing] = this.before;
+    if (!keep && theme && this.before) {
+      // The picks follow the name back too.
+      for (const [root, pick] of Object.entries(this.projectThemes)) {
+        if (pick === theme.name) this.projectThemes[root] = this.before.name;
+      }
+      if (this.defaultSelection === theme.name) this.defaultSelection = this.before.name;
+      this.themes[this.editing] = this.before;
+    }
     const current = this.themes[this.editing];
     this.editing = -1;
     this.before = null;
     this.el.editor.hidden = true;
     this.el.main.hidden = false;
-    this.buildSchemes(current?.name ?? this.selectedName());
+    this.buildSchemes();
     this.hooks.preview(current?.colors ?? []);
   }
 

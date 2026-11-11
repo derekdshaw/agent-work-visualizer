@@ -412,30 +412,36 @@ and a new theme is a code change.
   and the page calls it with `themeFor(settings, graph.payload.root)`:
   at startup, after a save, and in `applyGraph` when the page opens
   another working tree.
-- The Theme section of the dialog has two lists. "Theme for this project"
-  has a first entry "Use the default theme", then the schemes of the
-  server and the custom themes; it sets `projectThemes[root]`, or removes
-  the entry for the first item. It is disabled when no working tree is
-  open. "Default theme" has the schemes and the themes, and sets
-  `colorScheme`. Under each list, a swatch row shows the colors of the
-  selected theme. Each swatch has hover text that names the packages of
-  the open graph that get that color, for example "pkg/analyzer,
-  pkg/session". The dialog gets the root and the package list from the
-  graph when it opens. Edit and Delete apply to the theme in the default
-  list.
+- The Theme section of the dialog has two stacked groups, each with a
+  small header, a list, and the swatch row of its selection under the
+  list. **Project default** has a first entry "Use the global default",
+  then the schemes of the server and the custom themes; it sets
+  `projectThemes[root]`, or removes the entry for the first item. It is
+  disabled when no working tree is open. The New, Edit, and Delete
+  buttons sit to the right of this list. **Global default** has the
+  schemes and the themes, and sets `colorScheme`. Each swatch has hover
+  text that names the packages of the open graph that get that color,
+  for example "pkg/analyzer, pkg/session". The dialog gets the root and
+  the package list from the graph when it opens.
+- The buttons act on the theme that the project shows: its pick, or the
+  global default when the pick is "Use the global default". So the
+  viewer can edit a theme without making it the global default.
 - Buttons in the Theme section:
-  - **+** makes a new theme. Its colors are a copy of the selected theme.
-    Its label is "Theme N", where N is the smallest number that is not in
-    use. Its name is the label in lower case with `-` for spaces, made
-    unique with a number if necessary. The new theme is selected, and
-    the editor opens.
+  - **+** makes a new theme. Its colors are a copy of the theme that the
+    project shows. Its label is "Theme N", where N is the smallest number
+    that is not in use. Its name is the label in lower case with `-` for
+    spaces, made unique with a number if necessary. The new theme becomes
+    the pick of the project, or the global default when no tree is open,
+    and the editor opens.
   - **Edit**, a pencil icon with the hover text "Edit this theme", opens
-    the editor for the theme in the default list. It is disabled when a
-    scheme of the server is selected there.
+    the editor for the theme that the project shows. It is disabled when
+    that is a scheme of the server.
   - **Delete**, a trash can icon with the hover text "Delete this theme",
-    removes that theme, selects the default scheme in the default list,
-    and removes each project pick that named the theme. It is disabled
-    when a scheme of the server is selected.
+    removes that theme and each project pick that named it. A global
+    default that named it falls back to the first scheme. It is disabled
+    when the project shows a scheme of the server.
+  - A rename in the editor carries each project pick and the global
+    default with it, and the editor's Cancel carries them back.
   - The icon buttons have an `aria-label` with the same text as the hover
     text, and the look of the other icon buttons of the page.
 - **The editor** is a second view in the same `<dialog>`. It has:
@@ -499,14 +505,14 @@ and a new theme is a code change.
    package in the preview has a variation of that color.
 5. Click Done. Select the new theme in "Default theme", then Save.
    Reload. The graph has its colors. The settings file holds the theme.
-6. Open the dialog, select Default in the default list, click Edit. The
-   button is disabled. Select the custom theme, click Delete. Default is
-   selected. Click Cancel. Open the dialog. The custom theme is still
-   there, because Cancel discards the deletion.
-6a. Select Spring in "Theme for this project" and Save. The graph shows
+6. Open the dialog, show Default under "Project default". Edit is
+   disabled. Select the custom theme there and click Delete. The pick
+   returns to "Use the global default". Click Cancel. Open the dialog.
+   The custom theme is still there, because Cancel discards the deletion.
+6a. Select Spring under "Project default" and Save. The graph shows
     Spring. The settings file has the root path of this working tree
     under `projectThemes`. Open another working tree from the title bar.
-    The graph shows the default theme. Open this one again. The graph
+    The graph shows the global default. Open this one again. The graph
     shows Spring.
 6b. Edit the settings file by hand: give the project pick the value
     `"nosuch"`. Reload. The server logs that it replaced the pick, and

@@ -308,7 +308,9 @@ function applyStartup(settings: Settings, options: Options): void {
 // server. A name that the server does not know uses the first scheme.
 function applyColorScheme(name: string): void {
   const scheme = schemes.find((item) => item.name === name) ?? schemes[0];
-  if (scheme) document.documentElement.style.setProperty('--package-colors', scheme.colors.join(', '));
+  if (!scheme) return;
+  document.documentElement.style.setProperty('--package-colors', scheme.colors.join(', '));
+  scene.recolor();
 }
 
 async function startView(payload: GraphPayload): Promise<void> {

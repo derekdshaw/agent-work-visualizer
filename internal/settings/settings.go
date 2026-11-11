@@ -55,6 +55,10 @@ var Schemes = []Scheme{
 	// out because they read as the coral of an edit. Violet and blue are
 	// close (ΔE 9.8), so the ring labels, not color, identify a package.
 	{Name: "default", Label: "Default", Colors: []string{"#3987e5", "#d95926", "#199e70", "#c98500", "#9085e9", "#008300"}},
+	// Spring: chartreuse, teal, orange, blue, olive, and lavender. Contrast
+	// on #04060b >= 6.1, adjacent CVD ΔE >= 59.7 (protanopia and
+	// deuteranopia, Viénot), ΔE >= 27.9 to the coral and the edge colors.
+	{Name: "spring", Label: "Spring", Colors: []string{"#cdd13c", "#36b8c9", "#e07b39", "#5f8dd9", "#8fae1b", "#b48ae0"}},
 }
 
 // Options holds the rules that the page needs: the defaults, the valid

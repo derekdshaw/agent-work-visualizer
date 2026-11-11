@@ -123,6 +123,12 @@ export class GraphScene {
   // The package color of each node, and its lighter core.
   private haloBase: THREE.Color[] = [];
   private coreBase: THREE.Color[] = [];
+  // The modules of the graph and the module of each node, so recolor can
+  // compute the colors again. ringColors is the color buffer of the module
+  // rings, which recolor rewrites in place.
+  private modules: readonly string[] = [];
+  private modOf: readonly number[] = [];
+  private ringColors: THREE.BufferAttribute | null = null;
   private vectors: THREE.Vector3[] = [];
   private sizes: number[] = [];
   private edges: Array<[number, number]> = [];
@@ -259,6 +265,8 @@ export class GraphScene {
     group.add(new THREE.Points(starGeometry, new THREE.PointsMaterial({ color: 0x4fe3f5, size: 0.35 * spread, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false, fog: false })));
 
     const colors = packageColors(graph.modules, readPalette());
+    this.modules = graph.modules;
+    this.modOf = graph.modOf;
     this.haloBase = graph.modOf.map((m) => colors[m]);
     this.coreBase = this.haloBase.map((color) => color.clone().lerp(WHITE, 0.3));
     this.groups = this.drawGroups(graph, group, colors);
@@ -364,9 +372,29 @@ export class GraphScene {
     });
     const ringGeometry = new THREE.BufferGeometry();
     ringGeometry.setAttribute('position', new THREE.BufferAttribute(rings, 3));
-    ringGeometry.setAttribute('color', new THREE.BufferAttribute(ringColors, 3));
+    this.ringColors = new THREE.BufferAttribute(ringColors, 3);
+    ringGeometry.setAttribute('color', this.ringColors);
     group.add(new THREE.LineSegments(ringGeometry, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false })));
     return { modules: modules.map((m) => new THREE.Vector3(m.x, m.y - 1, m.z)), files };
+  }
+
+  // recolor reads the palette again and sets the package color of each node
+  // and the ring color of each module. It does not move a node or the camera.
+  recolor(): void {
+    if (this.modules.length === 0) return;
+    const colors = packageColors(this.modules, readPalette());
+    this.haloBase = this.modOf.map((m) => colors[m]);
+    this.coreBase = this.haloBase.map((color) => color.clone().lerp(WHITE, 0.3));
+    const ring = this.ringColors;
+    if (!ring) return;
+    const array = ring.array;
+    for (let k = 0; k < this.modules.length; k++) {
+      for (let s = 0; s < RING_SEGMENTS; s++) {
+        colors[k].toArray(array, (k * RING_SEGMENTS + s) * 6);
+        colors[k].toArray(array, (k * RING_SEGMENTS + s) * 6 + 3);
+      }
+    }
+    ring.needsUpdate = true;
   }
 
   // trimmed sets this.from and this.to to edge a–b shortened by trimA and

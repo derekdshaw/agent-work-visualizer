@@ -5,7 +5,8 @@ import * as THREE from 'three';
 const CYCLE_SHIFTS = [0, 0.14, -0.12, 0.24, -0.2];
 const FALLBACK = 0x4fe3f5;
 
-// readPalette returns the package colors of the current scheme in settings/colors.css.
+// readPalette returns the package colors of the current scheme. main.ts sets
+// --package-colors on <html> from the scheme that the server sends.
 export function readPalette(): THREE.Color[] {
   const list = getComputedStyle(document.documentElement).getPropertyValue('--package-colors');
   return list

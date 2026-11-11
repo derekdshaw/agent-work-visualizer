@@ -1,8 +1,10 @@
 package settings
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -21,43 +23,59 @@ func TestLoadReturnsDefaultsWithoutAFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load error = %v", err)
 	}
-	if got != Defaults() {
-		t.Fatalf("Load = %+v, want %+v", got, Defaults())
+	if got.Found {
+		t.Fatal("Load found a file that does not exist")
+	}
+	if got.Settings != Defaults() {
+		t.Fatalf("Load = %+v, want %+v", got.Settings, Defaults())
 	}
 }
 
 func TestLoadReadsAFullFile(t *testing.T) {
-	path := writeSettings(t, `{"version":1,"skipWaiting":false,"colorScheme":"warm","autoRotate":false,"followEdit":false,"speed":4}`)
+	path := writeSettings(t, `{"version":1,"skipWaiting":false,"colorScheme":"default","autoRotate":false,"followEdit":false,"speed":4}`)
 	got, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load error = %v", err)
 	}
-	want := Settings{Version: 1, SkipWaiting: false, ColorScheme: "warm", AutoRotate: false, FollowEdit: false, Speed: 4}
-	if got != want {
-		t.Fatalf("Load = %+v, want %+v", got, want)
+	want := Settings{Version: 1, SkipWaiting: false, ColorScheme: "default", AutoRotate: false, FollowEdit: false, Speed: 4}
+	if !got.Found || len(got.Replaced) != 0 {
+		t.Fatalf("Load found = %v, replaced = %v; want found and nothing replaced", got.Found, got.Replaced)
+	}
+	if got.Settings != want {
+		t.Fatalf("Load = %+v, want %+v", got.Settings, want)
 	}
 }
 
 func TestLoadReplacesAFieldThatIsNotValid(t *testing.T) {
 	tests := map[string]struct {
-		text string
-		want Settings
+		text     string
+		want     Settings
+		replaced []string
 	}{
 		"speed 3": {
-			`{"version":1,"skipWaiting":false,"colorScheme":"warm","autoRotate":false,"followEdit":false,"speed":3}`,
-			Settings{Version: 1, SkipWaiting: false, ColorScheme: "warm", AutoRotate: false, FollowEdit: false, Speed: 1},
+			`{"version":1,"skipWaiting":false,"colorScheme":"default","autoRotate":false,"followEdit":false,"speed":3}`,
+			Settings{Version: 1, SkipWaiting: false, ColorScheme: "default", AutoRotate: false, FollowEdit: false, Speed: 1},
+			[]string{"speed"},
 		},
-		"bad color scheme name": {
-			`{"version":1,"colorScheme":"Bad Name","speed":8}`,
+		"unknown color scheme": {
+			`{"version":1,"colorScheme":"nosuch","speed":8}`,
 			Settings{Version: 1, SkipWaiting: true, ColorScheme: "default", AutoRotate: true, FollowEdit: true, Speed: 8},
+			[]string{"colorScheme"},
+		},
+		"both": {
+			`{"version":1,"colorScheme":"nosuch","speed":3}`,
+			Defaults(),
+			[]string{"colorScheme", "speed"},
 		},
 		"missing fields": {
 			`{"version":1,"autoRotate":false}`,
 			Settings{Version: 1, SkipWaiting: true, ColorScheme: "default", AutoRotate: false, FollowEdit: true, Speed: 1},
+			nil,
 		},
 		"unknown field": {
 			`{"version":1,"speed":2,"fontSize":12}`,
 			Settings{Version: 1, SkipWaiting: true, ColorScheme: "default", AutoRotate: true, FollowEdit: true, Speed: 2},
+			nil,
 		},
 	}
 	for name, test := range tests {
@@ -66,8 +84,16 @@ func TestLoadReplacesAFieldThatIsNotValid(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Load error = %v", err)
 			}
-			if got != test.want {
-				t.Fatalf("Load = %+v, want %+v", got, test.want)
+			if got.Settings != test.want {
+				t.Fatalf("Load = %+v, want %+v", got.Settings, test.want)
+			}
+			if len(got.Replaced) != len(test.replaced) {
+				t.Fatalf("Load replaced %v, want %v", got.Replaced, test.replaced)
+			}
+			for i, field := range test.replaced {
+				if !strings.HasPrefix(got.Replaced[i].Error(), field+":") {
+					t.Fatalf("Load replaced[%d] = %q, want the field %q", i, got.Replaced[i], field)
+				}
 			}
 		})
 	}
@@ -76,7 +102,7 @@ func TestLoadReplacesAFieldThatIsNotValid(t *testing.T) {
 func TestLoadReturnsDefaultsAndAnErrorForABrokenFile(t *testing.T) {
 	tests := map[string]string{
 		"not JSON":   `{"version": 1,`,
-		"wrong type": `{"version":1,"colorScheme":"warm","speed":"fast"}`,
+		"wrong type": `{"version":1,"colorScheme":"default","speed":"fast"}`,
 		"version 2":  `{"version":2,"speed":4}`,
 	}
 	for name, text := range tests {
@@ -85,8 +111,8 @@ func TestLoadReturnsDefaultsAndAnErrorForABrokenFile(t *testing.T) {
 			if err == nil {
 				t.Fatal("Load error = nil, want an error")
 			}
-			if got != Defaults() {
-				t.Fatalf("Load = %+v, want %+v", got, Defaults())
+			if got.Settings != Defaults() {
+				t.Fatalf("Load = %+v, want %+v", got.Settings, Defaults())
 			}
 		})
 	}
@@ -94,7 +120,7 @@ func TestLoadReturnsDefaultsAndAnErrorForABrokenFile(t *testing.T) {
 
 func TestSaveThenLoadGivesTheSameSettings(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "agent-work-visualizer", "settings.json")
-	want := Settings{Version: 1, SkipWaiting: false, ColorScheme: "warm", AutoRotate: false, FollowEdit: true, Speed: 16}
+	want := Settings{Version: 1, SkipWaiting: false, ColorScheme: "default", AutoRotate: false, FollowEdit: true, Speed: 16}
 	if err := Save(path, want); err != nil {
 		t.Fatalf("Save error = %v", err)
 	}
@@ -102,8 +128,8 @@ func TestSaveThenLoadGivesTheSameSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load error = %v", err)
 	}
-	if got != want {
-		t.Fatalf("Load = %+v, want %+v", got, want)
+	if got.Settings != want {
+		t.Fatalf("Load = %+v, want %+v", got.Settings, want)
 	}
 	info, err := os.Stat(path)
 	if err != nil {
@@ -136,10 +162,10 @@ func TestValidateNamesTheFieldThatIsNotValid(t *testing.T) {
 		change func(*Settings)
 		field  string
 	}{
-		"speed 3":               {func(s *Settings) { s.Speed = 3 }, "speed"},
-		"empty color scheme":    {func(s *Settings) { s.ColorScheme = "" }, "colorScheme"},
-		"color scheme Bad Name": {func(s *Settings) { s.ColorScheme = "Bad Name" }, "colorScheme"},
-		"version 2":             {func(s *Settings) { s.Version = 2 }, "version"},
+		"speed 3":              {func(s *Settings) { s.Speed = 3 }, "speed"},
+		"empty color scheme":   {func(s *Settings) { s.ColorScheme = "" }, "colorScheme"},
+		"unknown color scheme": {func(s *Settings) { s.ColorScheme = "nosuch" }, "colorScheme"},
+		"version 2":            {func(s *Settings) { s.Version = 2 }, "version"},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -153,6 +179,51 @@ func TestValidateNamesTheFieldThatIsNotValid(t *testing.T) {
 				t.Fatalf("Validate = %q, want the field %q", err, test.field)
 			}
 		})
+	}
+}
+
+func TestSchemesAreWellFormed(t *testing.T) {
+	if len(Schemes) == 0 || Schemes[0].Name != "default" {
+		t.Fatal("the first scheme must be default")
+	}
+	hex := regexp.MustCompile(`^#[0-9a-f]{6}$`)
+	seen := map[string]bool{}
+	for _, scheme := range Schemes {
+		if !schemeName.MatchString(scheme.Name) {
+			t.Errorf("scheme name %q is not valid", scheme.Name)
+		}
+		if seen[scheme.Name] {
+			t.Errorf("scheme name %q repeats", scheme.Name)
+		}
+		seen[scheme.Name] = true
+		if scheme.Label == "" {
+			t.Errorf("scheme %q has no label", scheme.Name)
+		}
+		if len(scheme.Colors) == 0 {
+			t.Errorf("scheme %q has no colors", scheme.Name)
+		}
+		for _, color := range scheme.Colors {
+			if !hex.MatchString(color) {
+				t.Errorf("scheme %q: color %q is not #rrggbb", scheme.Name, color)
+			}
+		}
+	}
+	if Validate(Defaults()) != nil {
+		t.Fatal("the default color scheme is not in Schemes")
+	}
+}
+
+func TestOptionsJSONFieldNames(t *testing.T) {
+	// web/src/settings/settings.ts reads these field names.
+	options := Options{
+		Defaults:     Settings{Version: 1, SkipWaiting: true, ColorScheme: "default", AutoRotate: true, FollowEdit: true, Speed: 1},
+		Speeds:       []float64{1, 2},
+		ColorSchemes: []Scheme{{Name: "default", Label: "Default", Colors: []string{"#3987e5"}}},
+	}
+	want := `{"defaults":{"version":1,"skipWaiting":true,"colorScheme":"default","autoRotate":true,"followEdit":true,"speed":1},` +
+		`"speeds":[1,2],"colorSchemes":[{"name":"default","label":"Default","colors":["#3987e5"]}]}`
+	if data, err := json.Marshal(options); err != nil || string(data) != want {
+		t.Errorf("options JSON = %s, %v, want %s", data, err, want)
 	}
 }
 

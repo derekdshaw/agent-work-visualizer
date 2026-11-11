@@ -60,11 +60,21 @@ func Run(config Config) error {
 	// folder, and then Run waits for them.
 	defer workers.Wait()
 	defer cancel()
-	current, err := settings.Load(config.SettingsPath)
-	if err != nil {
-		log.Printf("Using the default settings: %v", err)
+	// A settings error is not fatal, so it does not go into err, which the
+	// root check below returns.
+	loaded, settingsErr := settings.Load(config.SettingsPath)
+	switch {
+	case settingsErr != nil:
+		log.Printf("Using the default settings: %v", settingsErr)
+	case !loaded.Found:
+		log.Printf("No settings file at %s; using the defaults", config.SettingsPath)
+	default:
+		for _, replaced := range loaded.Replaced {
+			log.Printf("Settings %s: %v; using the default", config.SettingsPath, replaced)
+		}
+		log.Printf("Loaded settings from %s", config.SettingsPath)
 	}
-	live := &liveServer{projects: projects, sessions: config.Sessions, web: webHandler(builtWeb()), settingsPath: config.SettingsPath, settings: current}
+	live := &liveServer{projects: projects, sessions: config.Sessions, web: webHandler(builtWeb()), settingsPath: config.SettingsPath, settings: loaded.Settings}
 	live.open = func(root string) (*rootView, error) {
 		return openRoot(ctx, &workers, config.Analyzer, projects, config.Sessions, root)
 	}

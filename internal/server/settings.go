@@ -8,12 +8,19 @@ import (
 	"github.com/derekdshaw/agent-work-visualizer/internal/settings"
 )
 
-// serveSettings returns the current settings.
+// settingsPayload is the answer of GET /api/settings. The page reads the
+// field names in web/src/settings/settings.ts.
+type settingsPayload struct {
+	Settings settings.Settings `json:"settings"`
+	Options  settings.Options  `json:"options"`
+}
+
+// serveSettings returns the current settings and the options of the server.
 func (s *liveServer) serveSettings(w http.ResponseWriter, r *http.Request) {
 	s.settingsMu.Lock()
 	current := s.settings
 	s.settingsMu.Unlock()
-	writeSettings(w, current)
+	writeSettings(w, settingsPayload{Settings: current, Options: settings.AllOptions()})
 }
 
 // saveSettings replaces the settings with the full object in the request,
@@ -44,8 +51,8 @@ func (s *liveServer) saveSettings(w http.ResponseWriter, r *http.Request) {
 	writeSettings(w, next)
 }
 
-func writeSettings(w http.ResponseWriter, current settings.Settings) {
-	data, err := json.Marshal(current)
+func writeSettings(w http.ResponseWriter, value any) {
+	data, err := json.Marshal(value)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

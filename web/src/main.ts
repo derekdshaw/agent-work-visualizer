@@ -5,6 +5,7 @@ import { connect, getJSON, getText, postJSON } from './net/live.ts';
 import { type Ev, type Header, isRecord, parseLine, parseLog, type Result } from './session/events.ts';
 import { fold, heatTarget, LOCK_T, nextEditTime, type Phase, previousEditTime, thinkingSpans, type ViewState, waitingSpans } from './session/reduce.ts';
 import { playback } from './settings/playback.ts';
+import { loadSettings, type Options, type Scheme, type Settings } from './settings/settings.ts';
 import { GroupLabels } from './ui/labels.ts';
 import { type BlastItem, fmt, Panes } from './ui/panes.ts';
 import { bindPanes } from './ui/split.ts';
@@ -116,6 +117,9 @@ let followLive = true;
 let scrubbing = false;
 let autoRotate = !reducedMotion;
 let followCamera = true;
+// startupApplied is true after the first load applies the settings. A later
+// load, after a reset or a failed fetch, must not change the state again.
+let startupApplied = false;
 let clock = 0;
 let lastInteract = -10;
 
@@ -260,7 +264,47 @@ async function load(): Promise<void> {
     window.setTimeout(() => void load(), 2000);
     return;
   }
+  if (!startupApplied) {
+    const loaded = await loadSettings();
+    if (!loaded.ok) {
+      tree.setStatus('SERVER UNREACHABLE', 'err', loaded.error);
+      window.setTimeout(() => void load(), 2000);
+      return;
+    }
+    startupApplied = true;
+    applyStartup(loaded.value.settings, loaded.value.options);
+  }
   await startView(result.value);
+}
+
+// applyStartup sets the state of the page from the settings, and keeps the
+// rules of the server. The buttons on the page change the state after this,
+// but not the settings.
+function applyStartup(settings: Settings, options: Options): void {
+  speeds = options.speeds;
+  schemes = options.colorSchemes;
+  autoRotate = settings.autoRotate && !reducedMotion;
+  ui.rotate.setAttribute('aria-pressed', String(autoRotate));
+  followCamera = settings.followEdit;
+  ui.follow.setAttribute('aria-pressed', String(followCamera));
+  // The last speed that the viewer clicked overrides the setting.
+  speed = settings.speed;
+  try {
+    const saved = Number(localStorage.getItem(SPEED_KEY));
+    if (speeds.includes(saved)) speed = saved;
+  } catch {
+    // Without storage, playback starts at the speed setting.
+  }
+  setSpeedUI();
+  playback.skipWaiting = settings.skipWaiting;
+  applyColorScheme(settings.colorScheme);
+}
+
+// applyColorScheme sets the package colors of the graph from a scheme of the
+// server. A name that the server does not know uses the first scheme.
+function applyColorScheme(name: string): void {
+  const scheme = schemes.find((item) => item.name === name) ?? schemes[0];
+  if (scheme) document.documentElement.style.setProperty('--package-colors', scheme.colors.join(', '));
 }
 
 async function startView(payload: GraphPayload): Promise<void> {
@@ -423,16 +467,13 @@ ui.play.addEventListener('click', () => {
 });
 
 // Playback speed multiplies how fast t advances while playing behind the live
-// edge or in a replay. It is a per-viewer setting, so it lives in localStorage.
-const SPEEDS = [1, 2, 4, 8, 16];
+// edge or in a replay. The server sends the valid speeds and the color
+// schemes with the settings; applyStartup keeps them here. The speed button
+// keeps the last speed in localStorage.
 const SPEED_KEY = 'awv.speed';
+let speeds: readonly number[] = [];
+let schemes: readonly Scheme[] = [];
 let speed = 1;
-try {
-  const saved = Number(localStorage.getItem(SPEED_KEY));
-  if (SPEEDS.includes(saved)) speed = saved;
-} catch {
-  // Without storage, playback starts at 1×.
-}
 function setSpeedUI(): void {
   ui.speed.textContent = `${speed}×`;
   ui.speed.setAttribute('aria-label', `Playback speed ${speed}×`);
@@ -440,8 +481,9 @@ function setSpeedUI(): void {
   ui.speed.toggleAttribute('data-fast', speed > 1);
 }
 ui.speed.addEventListener('click', (event) => {
-  const step = event.shiftKey ? SPEEDS.length - 1 : 1;
-  speed = SPEEDS[(SPEEDS.indexOf(speed) + step) % SPEEDS.length];
+  if (speeds.length === 0) return;
+  const step = event.shiftKey ? speeds.length - 1 : 1;
+  speed = speeds[(speeds.indexOf(speed) + step) % speeds.length];
   try {
     localStorage.setItem(SPEED_KEY, String(speed));
   } catch {
@@ -570,7 +612,6 @@ stage.addEventListener(
   { passive: false },
 );
 
-ui.rotate.setAttribute('aria-pressed', String(autoRotate));
 ui.rotate.addEventListener('click', () => {
   autoRotate = !autoRotate;
   ui.rotate.setAttribute('aria-pressed', String(autoRotate));

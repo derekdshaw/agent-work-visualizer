@@ -36,6 +36,40 @@ type Settings struct {
 // Speeds lists the valid values of Speed.
 var Speeds = []float64{1, 2, 4, 8, 16}
 
+// Scheme is a color scheme of the graph. Colors are #rrggbb strings, which
+// the page gives to the packages in sorted name order. The page reads the
+// JSON field names in web/src/settings/settings.ts.
+type Scheme struct {
+	Name   string   `json:"name"`
+	Label  string   `json:"label"`
+	Colors []string `json:"colors"`
+}
+
+// Schemes lists the color schemes. The first is the default. Each scheme
+// must pass the checks in the comment at the top of
+// web/src/settings/colors.css, against the #04060b graph background and
+// the colors in that file.
+var Schemes = []Scheme{
+	// The dataviz reference hues stepped for dark surfaces (lightness,
+	// chroma, contrast, adjacent CVD ΔE >= 8.4). Red and magenta are left
+	// out because they read as the coral of an edit. Violet and blue are
+	// close (ΔE 9.8), so the ring labels, not color, identify a package.
+	{Name: "default", Label: "Default", Colors: []string{"#3987e5", "#d95926", "#199e70", "#c98500", "#9085e9", "#008300"}},
+}
+
+// Options holds the rules that the page needs: the defaults, the valid
+// speeds, and the color schemes. The page has no copy of them.
+type Options struct {
+	Defaults     Settings  `json:"defaults"`
+	Speeds       []float64 `json:"speeds"`
+	ColorSchemes []Scheme  `json:"colorSchemes"`
+}
+
+// AllOptions returns the options of this server.
+func AllOptions() Options {
+	return Options{Defaults: Defaults(), Speeds: Speeds, ColorSchemes: Schemes}
+}
+
 // schemeName matches a valid color scheme name.
 var schemeName = regexp.MustCompile(`^[a-z0-9-]{1,32}$`)
 
@@ -59,37 +93,51 @@ func DefaultPath() (string, error) {
 	return filepath.Join(config, "agent-work-visualizer", "settings.json"), nil
 }
 
+// Loaded is the result of Load. Found is false if the file does not exist.
+// Replaced lists each value that was not valid and got its default, so the
+// server can log it.
+type Loaded struct {
+	Settings Settings
+	Found    bool
+	Replaced []error
+}
+
 // Load returns the settings in the file at path. If the file does not exist,
 // Load returns Defaults() and no error. If the file is not valid JSON, if a
 // value has the wrong type, or if the version is not known, Load returns
-// Defaults() and an error. A field that is missing or has a value that is
-// not valid gets its default. The other fields keep their values. Load
-// ignores fields that it does not know.
-func Load(path string) (Settings, error) {
+// Defaults() and an error. A field that is missing gets its default. A
+// field that has a value that is not valid gets its default, and Replaced
+// names it. The other fields keep their values. Load ignores fields that it
+// does not know.
+func Load(path string) (Loaded, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return Defaults(), nil
+		return Loaded{Settings: Defaults()}, nil
 	}
 	if err != nil {
-		return Defaults(), fmt.Errorf("read settings: %w", err)
+		return Loaded{Settings: Defaults()}, fmt.Errorf("read settings: %w", err)
 	}
 	s := Defaults()
 	if err := json.Unmarshal(data, &s); err != nil {
 		// A value of the wrong type is also an error here, so the server
 		// logs it.
-		return Defaults(), fmt.Errorf("parse %s: %w", path, err)
+		return Loaded{Settings: Defaults()}, fmt.Errorf("parse %s: %w", path, err)
 	}
 	if err := validVersion(s.Version); err != nil {
-		return Defaults(), fmt.Errorf("parse %s: %w", path, err)
+		return Loaded{Settings: Defaults()}, fmt.Errorf("parse %s: %w", path, err)
 	}
+	loaded := Loaded{Found: true}
 	defaults := Defaults()
-	if validColorScheme(s.ColorScheme) != nil {
+	if err := validColorScheme(s.ColorScheme); err != nil {
+		loaded.Replaced = append(loaded.Replaced, err)
 		s.ColorScheme = defaults.ColorScheme
 	}
-	if validSpeed(s.Speed) != nil {
+	if err := validSpeed(s.Speed); err != nil {
+		loaded.Replaced = append(loaded.Replaced, err)
 		s.Speed = defaults.Speed
 	}
-	return s, nil
+	loaded.Settings = s
+	return loaded, nil
 }
 
 // Validate returns an error that names the first field of s that is not
@@ -112,8 +160,8 @@ func validVersion(version int) error {
 }
 
 func validColorScheme(name string) error {
-	if !schemeName.MatchString(name) {
-		return fmt.Errorf("colorScheme: %q must be 1 to 32 characters of a-z, 0-9, and -", name)
+	if !slices.ContainsFunc(Schemes, func(s Scheme) bool { return s.Name == name }) {
+		return fmt.Errorf("colorScheme: %q is not a known scheme", name)
 	}
 	return nil
 }

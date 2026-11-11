@@ -267,12 +267,24 @@ func TestServeControlsRejectOtherOrigins(t *testing.T) {
 	}
 }
 
-func TestServeSettingsReturnsTheDefaultsWithoutAFile(t *testing.T) {
+func TestServeSettingsReturnsTheDefaultsAndTheOptions(t *testing.T) {
 	live := &liveServer{settingsPath: filepath.Join(t.TempDir(), "settings.json"), settings: settings.Defaults()}
 	server := httptest.NewServer(live.routes())
 	t.Cleanup(server.Close)
-	if got := getSettings(t, server.URL); got != settings.Defaults() {
-		t.Fatalf("GET /api/settings = %+v, want %+v", got, settings.Defaults())
+	response, err := http.Get(server.URL + "/api/settings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var got settingsPayload
+	if err := json.NewDecoder(response.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Settings != settings.Defaults() {
+		t.Fatalf("GET /api/settings settings = %+v, want %+v", got.Settings, settings.Defaults())
+	}
+	if !reflect.DeepEqual(got.Options, settings.AllOptions()) {
+		t.Fatalf("GET /api/settings options = %+v, want %+v", got.Options, settings.AllOptions())
 	}
 }
 
@@ -281,8 +293,8 @@ func TestSaveSettingsKeepsValidSettingsAndWritesTheFile(t *testing.T) {
 	live := &liveServer{settingsPath: path, settings: settings.Defaults()}
 	server := httptest.NewServer(live.routes())
 	t.Cleanup(server.Close)
-	want := settings.Settings{Version: 1, SkipWaiting: false, ColorScheme: "warm", AutoRotate: false, FollowEdit: false, Speed: 4}
-	response := postSettings(t, server.URL, `{"version":1,"skipWaiting":false,"colorScheme":"warm","autoRotate":false,"followEdit":false,"speed":4}`)
+	want := settings.Settings{Version: 1, SkipWaiting: false, ColorScheme: "default", AutoRotate: false, FollowEdit: false, Speed: 4}
+	response := postSettings(t, server.URL, `{"version":1,"skipWaiting":false,"colorScheme":"default","autoRotate":false,"followEdit":false,"speed":4}`)
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("POST /api/settings = %d, want 200", response.StatusCode)
 	}
@@ -300,8 +312,8 @@ func TestSaveSettingsKeepsValidSettingsAndWritesTheFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if saved != want {
-		t.Fatalf("settings file holds %+v, want %+v", saved, want)
+	if saved.Settings != want {
+		t.Fatalf("settings file holds %+v, want %+v", saved.Settings, want)
 	}
 }
 
@@ -347,11 +359,11 @@ func getSettings(t *testing.T, base string) settings.Settings {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("GET /api/settings = %d, want 200", response.StatusCode)
 	}
-	var got settings.Settings
+	var got settingsPayload
 	if err := json.NewDecoder(response.Body).Decode(&got); err != nil {
 		t.Fatal(err)
 	}
-	return got
+	return got.Settings
 }
 
 // postSettings posts body to /api/settings and returns the response. The

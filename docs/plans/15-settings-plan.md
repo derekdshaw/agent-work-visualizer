@@ -265,7 +265,7 @@ In `web/src/main.ts`:
 
   | Control | Setting |
   | --- | --- |
-  | Radio buttons: one per color scheme, each with a row of color samples | `colorScheme` |
+  | List: one item per color scheme, with the color samples of the selection under it | `colorScheme` |
 
   **When the page opens**
 
@@ -275,10 +275,11 @@ In `web/src/main.ts`:
   | Check box: "Follow edit" | `followEdit` |
   | List: one item per speed in `options.speeds` | `speed` |
 
-  An `<option>` cannot hold the color samples, so the color scheme uses
-  radio inputs, one `<label>` each. The dialog builds the radio inputs
-  from `options.colorSchemes`, and the color samples from each scheme's
-  `colors`. The speed list is a `<select>` built from `options.speeds`.
+  The color scheme list is a `<select>` built from `options.colorSchemes`.
+  An `<option>` cannot hold the color samples, so a row of samples from
+  the selected scheme's `colors` shows under the list. Task 6 changes this
+  section to two lists, for the project and the global default. The speed
+  list is a `<select>` built from `options.speeds`.
 
   A note under the second group says: "These apply the next time the page
   opens." A note next to the speed list says: "The speed button keeps your

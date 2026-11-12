@@ -24,9 +24,8 @@ type Settings struct {
 	// SkipWaiting jumps over the time that the agent waits for the user
 	// during playback.
 	SkipWaiting bool `json:"skipWaiting"`
-	// ColorScheme is the name of a color scheme in the CSS of the page. The
-	// server does not know the names, so it accepts each name that has the
-	// valid form.
+	// ColorScheme is the name of a scheme in Schemes or of a custom theme in
+	// Themes. A name that neither holds is not valid.
 	ColorScheme string `json:"colorScheme"`
 	// AutoRotate, FollowEdit, and Speed set the state of the page when it
 	// opens.

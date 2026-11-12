@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode/utf8"
 )
 
 // Settings holds the settings of the viewer. The web page reads these field
@@ -230,7 +231,9 @@ func validTheme(theme Scheme) error {
 	if slices.ContainsFunc(Schemes, func(s Scheme) bool { return s.Name == theme.Name }) {
 		return fmt.Errorf("themes: %q is the name of a scheme of the server", theme.Name)
 	}
-	if theme.Label == "" || len(theme.Label) > 40 {
+	// Count characters, not bytes, so each label that the page's maxlength
+	// allows is valid here too.
+	if theme.Label == "" || utf8.RuneCountInString(theme.Label) > 40 {
 		return fmt.Errorf("themes: %q: the label must be 1 to 40 characters", theme.Name)
 	}
 	if len(theme.Colors) == 0 || len(theme.Colors) > 12 {

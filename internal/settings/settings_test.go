@@ -191,10 +191,17 @@ func TestValidateChecksTheThemes(t *testing.T) {
 	if err := Validate(s); err != nil {
 		t.Fatalf("Validate = %v, want nil", err)
 	}
+	// The label limit counts characters, as the page's maxlength does, not
+	// bytes: é is 2 bytes in UTF-8.
+	s.Themes[0].Label = strings.Repeat("é", 40)
+	if err := Validate(s); err != nil {
+		t.Fatalf("Validate with a 40-character label = %v, want nil", err)
+	}
 	tests := map[string]struct {
 		change func(*Settings)
 		text   string
 	}{
+		"41-character label":      {func(s *Settings) { s.Themes[0].Label = strings.Repeat("é", 41) }, "label"},
 		"name of a server scheme": {func(s *Settings) { s.Themes[0].Name = "default" }, "scheme of the server"},
 		"name of the wrong form":  {func(s *Settings) { s.Themes[0].Name = "Bad Name" }, "1 to 32 characters"},
 		"name that repeats":       {func(s *Settings) { s.Themes = append(s.Themes, theme) }, "repeats"},

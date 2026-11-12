@@ -5,8 +5,10 @@ import { connect, getJSON, getText, postJSON } from './net/live.ts';
 import { type Ev, type Header, isRecord, parseLine, parseLog, type Result } from './session/events.ts';
 import { fold, heatTarget, LOCK_T, nextEditTime, type Phase, previousEditTime, thinkingSpans, type ViewState, waitingSpans } from './session/reduce.ts';
 import { playback } from './settings/playback.ts';
+import { loadSettings, type Options, saveSettings, type Scheme, type Settings, themeFor } from './settings/settings.ts';
 import { GroupLabels } from './ui/labels.ts';
 import { type BlastItem, fmt, Panes } from './ui/panes.ts';
+import { SettingsDialog } from './ui/settingsDialog.ts';
 import { bindPanes } from './ui/split.ts';
 import { bindTree } from './ui/tree.ts';
 import { GraphScene } from './view/scene.ts';
@@ -49,6 +51,7 @@ const ui = {
   meta: byId('meta', HTMLElement),
   mismatch: byId('mismatch', HTMLElement),
   gate: byId('btnGate', HTMLButtonElement),
+  settings: byId('btnSet', HTMLButtonElement),
   rec: byId('rec', HTMLElement),
   recWrap: byId('recWrap', HTMLElement),
   sessionPick: byId('sessPick', HTMLSelectElement),
@@ -116,6 +119,9 @@ let followLive = true;
 let scrubbing = false;
 let autoRotate = !reducedMotion;
 let followCamera = true;
+// startupApplied is true after the first load applies the settings. A later
+// load, after a reset or a failed fetch, must not change the state again.
+let startupApplied = false;
 let clock = 0;
 let lastInteract = -10;
 
@@ -225,6 +231,9 @@ async function applyGraph(payload: GraphPayload, sameView: boolean): Promise<voi
     activeFile = '';
     lastEdit = -1;
   }
+  // The working tree can have its own theme. It must be in place before
+  // the scene reads the palette.
+  if (currentSettings) applyColorScheme(themeFor(currentSettings, payload.root));
   scene.setGraph(next, result, sameView);
   labels.setGraph(next, payload.root.split('/').pop() || '.');
   ui.meta.textContent = `${next.n} NODES · ${next.edges.length} EDGES`;
@@ -260,7 +269,52 @@ async function load(): Promise<void> {
     window.setTimeout(() => void load(), 2000);
     return;
   }
+  if (!startupApplied) {
+    const loaded = await loadSettings();
+    if (!loaded.ok) {
+      tree.setStatus('SERVER UNREACHABLE', 'err', loaded.error);
+      window.setTimeout(() => void load(), 2000);
+      return;
+    }
+    startupApplied = true;
+    applyStartup(loaded.value.settings, loaded.value.options);
+  }
   await startView(result.value);
+}
+
+// applyStartup sets the state of the page from the settings, and keeps the
+// rules of the server. The buttons on the page change the state after this,
+// but not the settings.
+function applyStartup(settings: Settings, options: Options): void {
+  currentSettings = settings;
+  currentOptions = options;
+  speeds = options.speeds;
+  schemes = options.colorSchemes;
+  autoRotate = settings.autoRotate && !reducedMotion;
+  ui.rotate.setAttribute('aria-pressed', String(autoRotate));
+  followCamera = settings.followEdit;
+  ui.follow.setAttribute('aria-pressed', String(followCamera));
+  // The last speed that the viewer clicked overrides the setting.
+  speed = settings.speed;
+  try {
+    const saved = Number(localStorage.getItem(SPEED_KEY));
+    if (speeds.includes(saved)) speed = saved;
+  } catch {
+    // Without storage, playback starts at the speed setting.
+  }
+  setSpeedUI();
+  playback.skipWaiting = settings.skipWaiting;
+  applyColorScheme(themeFor(settings, graph.payload.root));
+}
+
+// applyColorScheme sets the package colors of the graph from a scheme of the
+// server. A name that the server does not know uses the first scheme.
+function applyColorScheme(name: string): void {
+  const all = [...schemes, ...(currentSettings?.themes ?? [])];
+  const scheme = all.find((item) => item.name === name) ?? all[0];
+  if (!scheme) return;
+  document.documentElement.style.setProperty('--package-colors', scheme.colors.join(', '));
+  scene.recolor();
 }
 
 async function startView(payload: GraphPayload): Promise<void> {
@@ -423,16 +477,90 @@ ui.play.addEventListener('click', () => {
 });
 
 // Playback speed multiplies how fast t advances while playing behind the live
-// edge or in a replay. It is a per-viewer setting, so it lives in localStorage.
-const SPEEDS = [1, 2, 4, 8, 16];
+// edge or in a replay. The server sends the valid speeds and the color
+// schemes with the settings; applyStartup keeps them here. The speed button
+// keeps the last speed in localStorage.
 const SPEED_KEY = 'awv.speed';
+let speeds: readonly number[] = [];
+let schemes: readonly Scheme[] = [];
 let speed = 1;
-try {
-  const saved = Number(localStorage.getItem(SPEED_KEY));
-  if (SPEEDS.includes(saved)) speed = saved;
-} catch {
-  // Without storage, playback starts at 1×.
-}
+
+// The saved settings and the rules of the server, for the settings dialog.
+// They are null until the first load applies the settings.
+let currentSettings: Settings | null = null;
+let currentOptions: Options | null = null;
+
+const settingsDialogElement = byId('dlgSettings', HTMLDialogElement);
+const settingsDialog = new SettingsDialog(
+  {
+    dialog: settingsDialogElement,
+    form: byId('setForm', HTMLFormElement),
+    opener: ui.settings,
+    main: byId('setMain', HTMLElement),
+    skipWaiting: byId('setSkip', HTMLInputElement),
+    projectTheme: byId('setProjectTheme', HTMLSelectElement),
+    projectSwatches: byId('setProjectSw', HTMLElement),
+    defaultTheme: byId('setDefaultTheme', HTMLSelectElement),
+    defaultSwatches: byId('setDefaultSw', HTMLElement),
+    addTheme: byId('setAddTheme', HTMLButtonElement),
+    editTheme: byId('setEditTheme', HTMLButtonElement),
+    deleteTheme: byId('setDelTheme', HTMLButtonElement),
+    autoRotate: byId('setRotate', HTMLInputElement),
+    motionNote: byId('setMotion', HTMLElement),
+    followEdit: byId('setFollow', HTMLInputElement),
+    speed: byId('setSpeed', HTMLSelectElement),
+    status: byId('setStatus', HTMLElement),
+    reset: byId('setReset', HTMLButtonElement),
+    cancel: byId('setCancel', HTMLButtonElement),
+    save: byId('setSave', HTMLButtonElement),
+    editor: byId('setEditor', HTMLElement),
+    editorLabel: byId('setThemeLabel', HTMLInputElement),
+    editorName: byId('setThemeName', HTMLElement),
+    editorRows: byId('setColors', HTMLElement),
+    addColor: byId('setAddColor', HTMLButtonElement),
+    preview: byId('setPreview', HTMLElement),
+    editorDone: byId('setEditDone', HTMLButtonElement),
+    editorCancel: byId('setEditCancel', HTMLButtonElement),
+  },
+  reducedMotion,
+  {
+    async onSave(next: Settings) {
+      if (!currentSettings || !currentOptions) return { ok: false, error: 'The settings are not loaded yet.' };
+      const result = await saveSettings(next, currentOptions);
+      if (result.ok) {
+        const previous = currentSettings;
+        currentSettings = result.value;
+        // Skip waits applies to the open page at once. The color scheme
+        // applies when the dialog closes. The startup settings apply at the
+        // next startup.
+        playback.skipWaiting = result.value.skipWaiting;
+        // A new speed setting clears the last clicked speed, so it applies
+        // at the next startup.
+        if (result.value.speed !== previous.speed) {
+          try {
+            localStorage.removeItem(SPEED_KEY);
+          } catch {
+            // Without storage, there is no last speed to clear.
+          }
+        }
+      }
+      return result;
+    },
+    preview(colors: readonly string[]) {
+      if (colors.length === 0) return;
+      document.documentElement.style.setProperty('--package-colors', colors.join(', '));
+      scene.recolor();
+    },
+  },
+);
+// The saved scheme comes back when the dialog closes: the old one after
+// Cancel, the new one after Save, and no editor preview stays.
+settingsDialogElement.addEventListener('close', () => {
+  if (currentSettings) applyColorScheme(themeFor(currentSettings, graph.payload.root));
+});
+ui.settings.addEventListener('click', () => {
+  if (currentSettings && currentOptions) settingsDialog.open(currentSettings, currentOptions, graph.modules, graph.payload.root);
+});
 function setSpeedUI(): void {
   ui.speed.textContent = `${speed}×`;
   ui.speed.setAttribute('aria-label', `Playback speed ${speed}×`);
@@ -440,8 +568,9 @@ function setSpeedUI(): void {
   ui.speed.toggleAttribute('data-fast', speed > 1);
 }
 ui.speed.addEventListener('click', (event) => {
-  const step = event.shiftKey ? SPEEDS.length - 1 : 1;
-  speed = SPEEDS[(SPEEDS.indexOf(speed) + step) % SPEEDS.length];
+  if (speeds.length === 0) return;
+  const step = event.shiftKey ? speeds.length - 1 : 1;
+  speed = speeds[(speeds.indexOf(speed) + step) % speeds.length];
   try {
     localStorage.setItem(SPEED_KEY, String(speed));
   } catch {
@@ -570,7 +699,6 @@ stage.addEventListener(
   { passive: false },
 );
 
-ui.rotate.setAttribute('aria-pressed', String(autoRotate));
 ui.rotate.addEventListener('click', () => {
   autoRotate = !autoRotate;
   ui.rotate.setAttribute('aria-pressed', String(autoRotate));

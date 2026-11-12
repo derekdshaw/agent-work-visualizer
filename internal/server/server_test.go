@@ -31,6 +31,7 @@ import (
 	"github.com/derekdshaw/agent-work-visualizer/internal/lang/langtest"
 	"github.com/derekdshaw/agent-work-visualizer/internal/lang/python"
 	"github.com/derekdshaw/agent-work-visualizer/internal/session"
+	"github.com/derekdshaw/agent-work-visualizer/internal/settings"
 	"github.com/derekdshaw/agent-work-visualizer/internal/transcript"
 	"github.com/derekdshaw/agent-work-visualizer/internal/transcript/transcripttest"
 )
@@ -239,7 +240,7 @@ func TestServeControlsRejectOtherOrigins(t *testing.T) {
 	live := &liveServer{view: testView(t, "")}
 	server := httptest.NewServer(live.routes())
 	t.Cleanup(server.Close)
-	for _, path := range []string{"/api/pause", "/api/resume", "/gate", "/api/root"} {
+	for _, path := range []string{"/api/pause", "/api/resume", "/gate", "/api/root", "/api/settings"} {
 		postControl(t, server.URL+path, "http://attacker.example", http.StatusForbidden)
 		postControl(t, server.URL+path, "null", http.StatusForbidden)
 	}
@@ -264,6 +265,117 @@ func TestServeControlsRejectOtherOrigins(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("cross-origin GET /api/graph status = %d, want 200", response.StatusCode)
 	}
+}
+
+func TestServeSettingsReturnsTheDefaultsAndTheOptions(t *testing.T) {
+	live := &liveServer{settingsPath: filepath.Join(t.TempDir(), "settings.json"), settings: settings.Defaults()}
+	server := httptest.NewServer(live.routes())
+	t.Cleanup(server.Close)
+	response, err := http.Get(server.URL + "/api/settings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var got settingsPayload
+	if err := json.NewDecoder(response.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Settings, settings.Defaults()) {
+		t.Fatalf("GET /api/settings settings = %+v, want %+v", got.Settings, settings.Defaults())
+	}
+	if !reflect.DeepEqual(got.Options, settings.AllOptions()) {
+		t.Fatalf("GET /api/settings options = %+v, want %+v", got.Options, settings.AllOptions())
+	}
+}
+
+func TestSaveSettingsKeepsValidSettingsAndWritesTheFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent-work-visualizer", "settings.json")
+	live := &liveServer{settingsPath: path, settings: settings.Defaults()}
+	server := httptest.NewServer(live.routes())
+	t.Cleanup(server.Close)
+	want := settings.Settings{Version: 1, SkipWaiting: false, ColorScheme: "default", AutoRotate: false, FollowEdit: false, Speed: 4}
+	response := postSettings(t, server.URL, `{"version":1,"skipWaiting":false,"colorScheme":"default","autoRotate":false,"followEdit":false,"speed":4}`)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("POST /api/settings = %d, want 200", response.StatusCode)
+	}
+	var answer settings.Settings
+	if err := json.NewDecoder(response.Body).Decode(&answer); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(answer, want) {
+		t.Fatalf("POST /api/settings answer = %+v, want %+v", answer, want)
+	}
+	if got := getSettings(t, server.URL); !reflect.DeepEqual(got, want) {
+		t.Fatalf("GET /api/settings = %+v, want %+v", got, want)
+	}
+	saved, err := settings.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(saved.Settings, want) {
+		t.Fatalf("settings file holds %+v, want %+v", saved.Settings, want)
+	}
+}
+
+func TestSaveSettingsRejectsSettingsThatAreNotValid(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	live := &liveServer{settingsPath: path, settings: settings.Defaults()}
+	server := httptest.NewServer(live.routes())
+	t.Cleanup(server.Close)
+	for name, test := range map[string]struct{ body, text string }{
+		"speed 3":         {`{"version":1,"skipWaiting":true,"colorScheme":"default","autoRotate":true,"followEdit":true,"speed":3}`, "speed: 3"},
+		"unknown field":   {`{"version":1,"skipWaiting":true,"colorScheme":"default","autoRotate":true,"followEdit":true,"speed":2,"extra":true}`, `unknown field "extra"`},
+		"missing version": {`{"speed":2}`, "version: 0"},
+		"not JSON":        {`{"speed":`, "unexpected EOF"},
+	} {
+		response := postSettings(t, server.URL, test.body)
+		text, err := io.ReadAll(response.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusBadRequest {
+			t.Fatalf("POST /api/settings with %s = %d, want 400", name, response.StatusCode)
+		}
+		if !strings.Contains(string(text), test.text) {
+			t.Fatalf("POST /api/settings with %s answered %q, want %q", name, text, test.text)
+		}
+	}
+	if got := getSettings(t, server.URL); !reflect.DeepEqual(got, settings.Defaults()) {
+		t.Fatalf("GET /api/settings after a bad POST = %+v, want the defaults", got)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a bad POST wrote the settings file: %v", err)
+	}
+}
+
+func getSettings(t *testing.T, base string) settings.Settings {
+	t.Helper()
+	response, err := http.Get(base + "/api/settings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/settings = %d, want 200", response.StatusCode)
+	}
+	var got settingsPayload
+	if err := json.NewDecoder(response.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	return got.Settings
+}
+
+// postSettings posts body to /api/settings and returns the response. The
+// caller closes the body.
+func postSettings(t *testing.T, base string, body string) *http.Response {
+	t.Helper()
+	response, err := http.Post(base+"/api/settings", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { response.Body.Close() })
+	return response
 }
 
 func TestServeEventsStreamsTheLogAndResumes(t *testing.T) {
@@ -1307,7 +1419,7 @@ func expectEvent(t *testing.T, events <-chan serverEvent, want serverEvent) {
 		if !ok {
 			t.Fatalf("stream ended, want %+v", want)
 		}
-		if got != want {
+		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("event = %+v, want %+v", got, want)
 		}
 	case <-time.After(5 * time.Second):

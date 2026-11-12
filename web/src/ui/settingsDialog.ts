@@ -120,6 +120,9 @@ export class SettingsDialog {
     el.editorCancel.addEventListener('click', () => this.closeEditor(false));
     el.form.addEventListener('submit', (event) => {
       event.preventDefault();
+      // Enter in the editor's Name field submits the form through the
+      // hidden SAVE button. Only Done or Cancel leaves the editor.
+      if (this.editing >= 0) return;
       void (async () => {
         el.save.disabled = true;
         el.status.textContent = '';

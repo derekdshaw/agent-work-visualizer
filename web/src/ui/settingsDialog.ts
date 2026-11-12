@@ -46,6 +46,13 @@ export interface SettingsDialogHooks {
   preview(colors: readonly string[]): void;
 }
 
+// dropIndex returns the index that the dragged row from gets when the
+// pointer is at y: the number of the other rows whose middle is above y.
+// middles holds the middle y of each row, the dragged row too.
+export function dropIndex(middles: readonly number[], from: number, y: number): number {
+  return middles.filter((middle, i) => i !== from && middle < y).length;
+}
+
 // SettingsDialog is the modal settings form. open fills the controls from
 // the settings and the options of the server. The theme section lists the
 // schemes of the server and the custom themes, and an editor view makes and
@@ -402,26 +409,35 @@ export class SettingsDialog {
   }
 
   // bindDrag reorders the rows with the pointer events, so it works with
-  // touch too. A line under a row shows where the drag will drop.
+  // touch too. A line between the rows shows where the drag will drop.
   private bindDrag(handle: HTMLButtonElement, row: HTMLElement, index: number): void {
     handle.addEventListener('pointerdown', (down) => {
       down.preventDefault();
       handle.setPointerCapture(down.pointerId);
       let to = index;
       const rows = Array.from(this.el.editorRows.children);
+      const others = rows.filter((_, i) => i !== index);
+      // The line goes under the row that the color will follow, or over the
+      // first row when the color goes to the top.
       const mark = (at: number) => {
-        rows.forEach((r, i) => r.classList.toggle('drop', i === at && i !== index));
-        row.classList.toggle('dragging', at !== index);
-      };
-      const find = (y: number) => {
-        let at = index;
-        rows.forEach((r, i) => {
-          const box = r.getBoundingClientRect();
-          if (y > box.top + box.height / 2) at = i;
-          else if (i === 0 && y < box.top + box.height / 2) at = 0;
+        const moves = at !== index;
+        const after = moves && at > 0 ? others[at - 1] : null;
+        const before = moves && at === 0 ? others[0] : null;
+        rows.forEach((r) => {
+          r.classList.toggle('drop', r === after);
+          r.classList.toggle('dropbefore', r === before);
         });
-        return at;
+        row.classList.toggle('dragging', moves);
       };
+      const find = (y: number) =>
+        dropIndex(
+          rows.map((r) => {
+            const box = r.getBoundingClientRect();
+            return box.top + box.height / 2;
+          }),
+          index,
+          y,
+        );
       const move = (event: PointerEvent) => {
         to = find(event.clientY);
         mark(to);

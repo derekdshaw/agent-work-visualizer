@@ -198,6 +198,7 @@ dialog.settings h4{margin:12px 0 6px;font:500 11px var(--mono);letter-spacing:.1
 .btn:disabled{opacity:.35;cursor:default}
 .colorrow{display:flex;align-items:center;gap:8px;padding:3px 0}
 .colorrow.drop{box-shadow:0 2px 0 var(--cyan)}
+.colorrow.dropbefore{box-shadow:0 -2px 0 var(--cyan)}
 .colorrow.dragging{opacity:.6}
 .colorrow input[type="color"]{width:44px;height:28px;padding:0;border:1px solid rgba(79,227,245,.3);background:var(--void)}
 .colorrow .hex{font:500 12px var(--mono);color:var(--mute)}
